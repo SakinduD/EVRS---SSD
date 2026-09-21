@@ -1,5 +1,8 @@
+import io
 import os
 import json
+import hashlib
+import logging
 from typing import List, Optional, Literal, Any, Dict
 
 import numpy as np
@@ -15,10 +18,165 @@ from dotenv import load_dotenv
 load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# model and schema paths
-MODEL_PATH = os.getenv("MODEL_PATH") or os.path.join(BASE_DIR, "evrs_miss_next_model_xgb_tuned_calibrated.pkl")
+# Audit logging. The integrity results below are security events, so they need a
+# handler of their own: uvicorn configures only its own loggers, and Python's
+# fallback handler silently discards anything under WARNING. Without this block
+# a successful verification would leave no trace at all.
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FILE = os.getenv("LOG_FILE") or os.path.join(BASE_DIR, "logs", "scorer.log")
 
-SCHEMA_PATH = os.getenv("SCHEMA_PATH") or os.path.join(BASE_DIR, "evrs_feature_schema_xgb_tuned.json")
+logger = logging.getLogger("evrs.scorer")
+logger.setLevel(LOG_LEVEL)
+logger.propagate = False
+if not logger.handlers:
+    _formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    )
+    _console = logging.StreamHandler()
+    _console.setFormatter(_formatter)
+    logger.addHandler(_console)
+    try:
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        _file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        _file_handler.setFormatter(_formatter)
+        logger.addHandler(_file_handler)
+    except OSError:
+        # A read-only or missing log directory must not stop the service from
+        # starting; console logging still covers the audit trail.
+        logger.warning("Could not open log file %s; logging to console only", LOG_FILE)
+
+# Local-development escape hatch for the integrity checks below. Must stay false
+# in any deployed environment - it is the difference between "verified" and "trusted".
+ALLOW_UNVERIFIED_ARTIFACTS = os.getenv("ALLOW_UNVERIFIED_ARTIFACTS", "false").lower() == "true"
+
+
+def _resolve_trusted_path(env_var: str, default_name: str) -> str:
+    """Resolve an artifact path, rejecting anything that escapes BASE_DIR.
+
+    MODEL_PATH and SCHEMA_PATH are read from the environment. Without this guard,
+    anyone able to influence the environment (a leaked .env, a compromised CI
+    variable, a container misconfiguration) could aim the loader at a file they
+    control anywhere on disk and get it deserialised. See _read_verified_bytes()
+    for why that is remote code execution rather than a mere bad-data problem.
+    """
+    raw = os.getenv(env_var) or default_name
+    candidate = raw if os.path.isabs(raw) else os.path.join(BASE_DIR, raw)
+    resolved = os.path.realpath(candidate)
+    base = os.path.realpath(BASE_DIR)
+    if resolved != base and not resolved.startswith(base + os.sep):
+        raise RuntimeError(
+            f"{env_var} resolves outside the service directory; refusing to load it."
+        )
+    return resolved
+
+
+# V14: the pinned digests live in a git-tracked lock file rather than in .env.
+# A digest is not a secret, and keeping it under version control means that
+# altering a pin shows up in `git diff` and in code review. A digest sitting in
+# an untracked .env can be rewritten by the same attacker who swapped the model,
+# leaving no trace - which defeats the point of pinning it at all.
+LOCK_PATH = os.path.join(BASE_DIR, "artifacts.lock.json")
+
+
+def _load_lockfile() -> tuple:
+    """Read the pinned filenames and SHA-256 digests from the git-tracked lock file.
+
+    Returns (paths, digests) keyed by artifact name.
+    """
+    try:
+        with open(LOCK_PATH, "r", encoding="utf-8") as fh:
+            lock = json.load(fh)
+    except FileNotFoundError:
+        logger.warning(
+            "No artifacts.lock.json found; falling back to *_SHA256 environment variables."
+        )
+        return {}, {}
+    except (OSError, ValueError) as e:
+        logger.exception("Could not parse artifacts.lock.json")
+        raise RuntimeError("artifacts.lock.json could not be parsed.") from e
+
+    artifacts = lock.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise RuntimeError("artifacts.lock.json is missing its 'artifacts' object.")
+
+    paths: Dict[str, str] = {}
+    digests: Dict[str, str] = {}
+    for name, entry in artifacts.items():
+        if not isinstance(entry, dict) or not entry.get("sha256"):
+            raise RuntimeError(
+                f"artifacts.lock.json entry '{name}' has no sha256 value."
+            )
+        key = str(name).upper()
+        digests[key] = str(entry["sha256"]).strip().lower()
+        if entry.get("path"):
+            paths[key] = str(entry["path"])
+    return paths, digests
+
+
+PINNED_PATHS, PINNED_DIGESTS = _load_lockfile()
+
+
+def _read_verified_bytes(path: str, env_prefix: str) -> bytes:
+    """Read an artifact once and return its bytes only if the SHA-256 matches.
+
+    joblib.load() unpickles, and unpickling executes arbitrary code that the file
+    itself chooses - a hostile model file is code execution at startup, before a
+    single request is served (OWASP A08, Software and Data Integrity Failures).
+    Verifying the digest BEFORE the load is what downgrades that from RCE to a
+    startup failure, so this must run first and must fail closed.
+
+    The file is read exactly once and the caller deserialises the returned buffer
+    rather than re-opening the path. Hashing the file and then loading it from
+    disk would leave a TOCTOU window: anyone able to write to the path between
+    the two reads could pass the check and still have different bytes executed.
+    Returning the verified bytes removes that window, because the bytes that were
+    hashed are the only bytes that ever get deserialised.
+    """
+    with open(path, "rb") as fh:
+        payload = fh.read()
+    actual = hashlib.sha256(payload).hexdigest()
+
+    # The lock file is the source of truth; the environment variable remains only
+    # as a fallback for deployments that inject digests out of band.
+    expected = PINNED_DIGESTS.get(env_prefix) or (
+        os.getenv(f"{env_prefix}_SHA256") or ""
+    ).strip().lower()
+
+    if not expected:
+        if ALLOW_UNVERIFIED_ARTIFACTS:
+            logger.warning(
+                "%s integrity check SKIPPED because ALLOW_UNVERIFIED_ARTIFACTS=true. "
+                "Observed SHA-256 is %s - pin it in artifacts.lock.json with "
+                "`python tools/checksum_artifacts.py --write` and clear the override "
+                "before deploying.",
+                env_prefix, actual,
+            )
+            return payload
+        raise RuntimeError(
+            f"No pinned digest for {env_prefix}, so the artifact cannot be "
+            f"verified. Add it to artifacts.lock.json (observed: {actual}) with "
+            f"`python tools/checksum_artifacts.py --write`, or set "
+            f"ALLOW_UNVERIFIED_ARTIFACTS=true for local development only."
+        )
+
+    if actual != expected:
+        # Deliberately does not echo the observed digest: on a mismatch we are
+        # possibly talking to an attacker, and confirming what we computed only
+        # helps them iterate.
+        logger.error("%s integrity check failed for %s", env_prefix, path)
+        raise RuntimeError(
+            f"{env_prefix} failed integrity verification; refusing to load it."
+        )
+
+    logger.info("%s integrity verified (sha256=%s)", env_prefix, actual)
+    return payload
+
+
+# model and schema paths. The filename defaults come from the lock file so that
+# artifacts.lock.json is the single place describing what this service loads.
+MODEL_PATH = _resolve_trusted_path("MODEL_PATH", PINNED_PATHS.get("MODEL", "evrs_miss_next_model.pkl"))
+
+SCHEMA_PATH = _resolve_trusted_path("SCHEMA_PATH", PINNED_PATHS.get("SCHEMA", "evrs_feature_schema.json"))
 
 HORIZON_DAYS = int(os.getenv("HORIZON_DAYS", "120"))
 HIGH_THR = float(os.getenv("HIGH_THR", "0.65"))
@@ -34,17 +192,24 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# load model and schema
+# load model and schema - deserialise the verified buffer, never the path again
 try:
-    model = joblib.load(MODEL_PATH)
+    model = joblib.load(io.BytesIO(_read_verified_bytes(MODEL_PATH, "MODEL")))
+except RuntimeError:
+    raise
 except Exception as e:
-    raise RuntimeError(f"Failed to load model from {MODEL_PATH}: {e}")
+    # Log the detail locally; the raised message stays generic so filesystem
+    # paths and library internals never reach a caller or a shared log sink.
+    logger.exception("Failed to load model")
+    raise RuntimeError("Failed to load the scoring model.") from e
 
 try:
-    with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
-        schema = json.load(f)
+    schema = json.loads(_read_verified_bytes(SCHEMA_PATH, "SCHEMA").decode("utf-8"))
+except RuntimeError:
+    raise
 except Exception as e:
-    raise RuntimeError(f"Failed to read schema from {SCHEMA_PATH}: {e}")
+    logger.exception("Failed to read feature schema")
+    raise RuntimeError("Failed to read the feature schema.") from e
 
 if "input_columns" not in schema or not isinstance(schema["input_columns"], dict):
     raise RuntimeError("Schema file missing 'input_columns' mapping.")
