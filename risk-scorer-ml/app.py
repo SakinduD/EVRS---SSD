@@ -3,13 +3,14 @@ import os
 import json
 import hashlib
 import logging
+import secrets
 from typing import List, Optional, Literal, Any, Dict
 
 import numpy as np
 import pandas as pd
 import joblib
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -182,15 +183,102 @@ HORIZON_DAYS = int(os.getenv("HORIZON_DAYS", "120"))
 HIGH_THR = float(os.getenv("HIGH_THR", "0.65"))
 MED_THR = float(os.getenv("MED_THR", "0.35"))
 
+# V13: authentication for the scoring endpoints.
+#
+# This service holds a model trained on citizen vaccination records and will
+# score anyone it is asked about. It previously accepted every request that
+# reached its port, which made the Node backend's admin-only check decorative:
+# an attacker who could reach 8081 simply bypassed it. The service is only ever
+# called server-to-server by the Node backend, so a shared secret in a header is
+# proportionate - there is no browser, user session or consent flow involved.
+# nosec B105 - this is the NAME of the HTTP header, not a credential. The
+# secret itself is read from the environment on the next few lines.
+INTERNAL_TOKEN_HEADER = "X-Internal-Token"  # nosec B105
+MIN_TOKEN_LENGTH = 32
+
+INTERNAL_API_TOKEN = (os.getenv("INTERNAL_API_TOKEN") or "").strip()
+
+if not INTERNAL_API_TOKEN:
+    raise RuntimeError(
+        "INTERNAL_API_TOKEN is not set. The scorer will not start without it, "
+        "because an unauthenticated scoring endpoint exposes citizen health "
+        "data to anyone who can reach the port. Generate one with: "
+        "python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+
+if len(INTERNAL_API_TOKEN) < MIN_TOKEN_LENGTH:
+    raise RuntimeError(
+        f"INTERNAL_API_TOKEN is shorter than {MIN_TOKEN_LENGTH} characters. A "
+        f"guessable shared secret is barely better than none; generate one with: "
+        f"python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+
+
+def require_internal_token(
+    request: Request,
+    provided: str = Header(default="", alias=INTERNAL_TOKEN_HEADER),
+) -> None:
+    """Reject any caller that cannot present the shared internal token.
+
+    secrets.compare_digest() is used rather than == because a plain comparison
+    short-circuits on the first differing byte, and the time it takes leaks how
+    much of the token was correct - enough, over many attempts, to recover it
+    one character at a time.
+    """
+    expected = INTERNAL_API_TOKEN.encode("utf-8")
+    supplied = (provided or "").encode("utf-8", "ignore")
+
+    if not secrets.compare_digest(supplied, expected):
+        client = request.client.host if request.client else "unknown"
+        logger.warning(
+            "Rejected request to %s from %s: %s internal token",
+            request.url.path,
+            client,
+            "missing" if not provided else "invalid",
+        )
+        # The response says nothing about which part was wrong, and carries no
+        # hint that a valid token exists at all.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+        )
+
+
 # app init
 app = FastAPI(title="EVRS Miss-Next Vaccine Scorer (XGBoost)", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
+
+# V13: CORS was allow_origins=["*"] with allow_credentials=True - a combination
+# browsers reject outright, so it was both insecure in intent and broken in
+# practice. Nothing in this service is called from a browser; the Node backend
+# reaches it server-to-server, where CORS plays no part. The middleware is
+# therefore only mounted when an origin is explicitly configured, and defaults
+# to not being mounted at all.
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in (os.getenv("ALLOWED_ORIGINS") or "").split(",")
+    if origin.strip()
+]
+
+if ALLOWED_ORIGINS:
+    if "*" in ALLOWED_ORIGINS:
+        raise RuntimeError(
+            "ALLOWED_ORIGINS must name explicit origins; '*' would re-open the "
+            "service to every site a victim's browser visits."
+        )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        # No cookies or browser credentials are involved; the caller
+        # authenticates with an explicit header instead.
+        allow_credentials=False,
+        allow_methods=["POST"],
+        allow_headers=["Content-Type", INTERNAL_TOKEN_HEADER],
+    )
+    logger.info("CORS enabled for %s", ", ".join(ALLOWED_ORIGINS))
+else:
+    logger.info(
+        "CORS middleware not mounted; this service is called server-to-server only."
+    )
 
 # load model and schema - deserialise the verified buffer, never the path again
 try:
@@ -437,7 +525,7 @@ def health():
         "schema_path": SCHEMA_PATH,
     }
 
-@app.post("/score")
+@app.post("/score", dependencies=[Depends(require_internal_token)])
 def score_events(req: ScoreRequest):
     if not req.events:
         raise HTTPException(status_code=400, detail="No events provided")
@@ -450,7 +538,7 @@ def score_events(req: ScoreRequest):
     results = _score_dataframe(df)
     return {"results": results}
 
-@app.post("/score/events_debug")
+@app.post("/score/events_debug", dependencies=[Depends(require_internal_token)])
 def score_events_debug(req: ScoreRequest):
     if not req.events:
         raise HTTPException(status_code=400, detail="No events provided")
