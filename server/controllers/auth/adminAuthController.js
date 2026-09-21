@@ -1,11 +1,11 @@
 import Admin from "../../models/adminModel.js";
-import bcrypt from "bcryptjs";
+import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
 
 export const loginAdmin = async (req, res) => {
   const { adminId, password } = req.body;
 
-  if (!adminId || !password) {
+  if (typeof adminId !== "string" || typeof password !== "string" || !adminId || !password) {
     return res
       .status(400)
       .json({ message: "Admin ID and password are required" });
@@ -13,15 +13,10 @@ export const loginAdmin = async (req, res) => {
 
   try {
     const admin = await Admin.findOne({ adminId });
+    const isMatch = await checkPassword(password, admin?.password);
 
-    if (!admin) {
-      return res.status(404).json({ message: "Admin not found" });
-    }
-
-    const isMatch = await bcrypt.compare(password, admin.password);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+    if (!admin || !isMatch) {
+      return res.status(401).json({ message: INVALID_CREDENTIALS });
     }
 
     const token = jwt.sign(
@@ -39,7 +34,6 @@ export const loginAdmin = async (req, res) => {
 
     res.status(200).json({
       message: "Login successful",
-      token,
       admin: {
         adminId: admin.adminId,
         fullName: admin.fullName,

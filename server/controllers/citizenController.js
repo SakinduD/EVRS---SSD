@@ -1,4 +1,9 @@
 import bcrypt from "bcryptjs";
+import {
+  generateOtp,
+  verifyPendingOtp,
+  sendOtpFailure,
+} from "../helpers/otp.js";
 import { sendMail } from "../services/mailer.js";
 import { sendWhatsAppOTP } from "../services/twilio.js";
 import Patient from "../models/patientModel.js";
@@ -119,7 +124,7 @@ export const updateCitizenProfile = async (req, res) => {
         ...(address && { address }),
       },
       { new: true, runValidators: true }
-    ).select("-password");
+    ).select("-password -pendingEmail -pendingPhone -resetPassword -googleSub -__v");
 
     if (!updated) {
       return res.status(404).json({ message: "Citizen not found" });
@@ -134,10 +139,6 @@ export const updateCitizenProfile = async (req, res) => {
 
 // ----- Profile Settings Section -----
 
-function genCode() {
-  return ("" + Math.floor(100000 + Math.random() * 900000)).slice(0, 6);
-}
-
 const OTP_TTL_MS = 10 * 60 * 1000;
 
 export const requestEmailChange = async (req, res) => {
@@ -149,14 +150,14 @@ export const requestEmailChange = async (req, res) => {
   }
 
   // gen 6 digit code
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = generateOtp();
 
   try {
     const expires = new Date(Date.now() + OTP_TTL_MS);
     await Patient.findOneAndUpdate(
       { citizenId },
       {
-        pendingEmail: { address: newEmail, code, expires },
+        pendingEmail: { address: newEmail, code, expires, attempts: 0 },
       }
     );
 
@@ -184,22 +185,18 @@ export const verifyEmailChange = async (req, res) => {
   }
 
   try {
+    const result = await verifyPendingOtp({
+      Model: Patient,
+      filter: { citizenId },
+      field: "pendingEmail",
+      code,
+    });
+    if (result.status !== "ok") {
+      return sendOtpFailure(res, "email", result.status);
+    }
+
     const patient = await Patient.findOne({ citizenId });
-
-    if (!patient || !patient.pendingEmail.code) {
-      return res.status(404).json({ message: "No pending email change found" });
-    }
-
-    const { address, code: expectedCode, expires } = patient.pendingEmail;
-
-    if (new Date() > expires) {
-      return res.status(410).json({ message: "Verification code expired" });
-    }
-    if (code !== expectedCode) {
-      return res.status(401).json({ message: "Invalid verification code" });
-    }
-
-    patient.email = address;
+    patient.email = result.pending.address;
 
     patient.pendingEmail = { address: "", code: "", expires: null };
     await patient.save();
@@ -224,13 +221,13 @@ export const requestPhoneChange = async (req, res) => {
     return res.status(409).json({ message: "Phone already in use" });
   }
 
-  const code = genCode();
+  const code = generateOtp();
   const expires = new Date(Date.now() + 15 * 60 * 1000);
 
   // store pendingPhone
   const updated = await Patient.findOneAndUpdate(
     { citizenId },
-    { pendingPhone: { number: newPhone, code, expires } },
+    { pendingPhone: { number: newPhone, code, expires, attempts: 0 } },
     { new: true }
   );
   if (!updated) {
@@ -254,20 +251,18 @@ export const verifyPhoneChange = async (req, res) => {
     return res.status(400).json({ message: "code is required" });
   }
 
-  const user = await Patient.findOne({ citizenId }).select("pendingPhone");
-  if (!user || !user.pendingPhone) {
-    return res.status(400).json({ message: "No pending phone change" });
+  const result = await verifyPendingOtp({
+    Model: Patient,
+    filter: { citizenId },
+    field: "pendingPhone",
+    code,
+  });
+  if (result.status !== "ok") {
+    return sendOtpFailure(res, "phone", result.status);
   }
 
-  const { number, code: savedCode, expires } = user.pendingPhone;
-  if (new Date() > expires) {
-    return res.status(400).json({ message: "Verification code expired" });
-  }
-  if (code !== savedCode) {
-    return res.status(400).json({ message: "Invalid verification code" });
-  }
-
-  user.phoneNumber = number;
+  const user = await Patient.findOne({ citizenId });
+  user.phoneNumber = result.pending.number;
   user.pendingPhone = undefined;
   await user.save();
 
@@ -395,7 +390,7 @@ export const getCitizenProfile = async (req, res) => {
 
   try {
     const citizen = await Patient.findOne({ citizenId })
-      .select("-password -pendingEmail -pendingPhone -__v")
+      .select("-password -pendingEmail -pendingPhone -resetPassword -googleSub -__v")
       .lean();
 
     if (!citizen) {

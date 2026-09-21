@@ -4,6 +4,8 @@ const pendingSub = {
   address: { type: String, default: "" },
   code: { type: String, default: "" },
   expires: { type: Date, default: null },
+  // wrong-code counter; the code is destroyed once MAX_OTP_ATTEMPTS is reached
+  attempts: { type: Number, default: 0 },
 };
 
 const hcpSchema = new mongoose.Schema(
@@ -46,6 +48,7 @@ const hcpSchema = new mongoose.Schema(
       address: pendingSub.address,
       code: pendingSub.code,
       expires: pendingSub.expires,
+      attempts: pendingSub.attempts,
     },
 
     // otp for phone
@@ -53,6 +56,7 @@ const hcpSchema = new mongoose.Schema(
       number: { type: String, default: "" },
       code: pendingSub.code,
       expires: pendingSub.expires,
+      attempts: pendingSub.attempts,
     },
     resetPassword: {
       token: { type: String },
