@@ -1,11 +1,11 @@
 import HCP from "../../models/hcpModel.js";
-import bcrypt from "bcryptjs";
+import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
 
 export const loginHCP = async (req, res) => {
   const { hcpId, password } = req.body;
 
-  if (!hcpId || !password) {
+  if (typeof hcpId !== "string" || typeof password !== "string" || !hcpId || !password) {
     return res
       .status(400)
       .json({ message: "HCP ID and password are required" });
@@ -13,15 +13,10 @@ export const loginHCP = async (req, res) => {
 
   try {
     const hcp = await HCP.findOne({ hcpId });
+    const isMatch = await checkPassword(password, hcp?.password);
 
-    if (!hcp) {
-      return res.status(404).json({ message: "Healthcare Provider not found" });
-    }
-
-    const isMatch = await bcrypt.compare(password, hcp.password);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+    if (!hcp || !isMatch) {
+      return res.status(401).json({ message: INVALID_CREDENTIALS });
     }
 
     const token = jwt.sign(
@@ -39,7 +34,6 @@ export const loginHCP = async (req, res) => {
 
     res.status(200).json({
       message: "Login successful",
-      token,
       hcp: {
         hcpId: hcp.hcpId,
         fullName: hcp.fullName,
