@@ -1,16 +1,18 @@
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import {
+  generateOtp,
+  verifyPendingOtp,
+  sendOtpFailure,
+} from "../helpers/otp.js";
 import { sendMail } from "../services/mailer.js";
 import { sendWhatsAppOTP } from "../services/twilio.js";
 import HealthcareProvider from "../models/hcpModel.js";
 import VaccinationRecord from "../models/vaccinationModel.js";
 
 function generateVaccinationId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `VR${digits}`;
-}
-
-function genCode() {
-  return ("" + Math.floor(100000 + Math.random() * 900000)).slice(0, 6);
 }
 
 const OTP_TTL_MS = 10 * 60 * 1000;
@@ -24,14 +26,14 @@ export const requestEmailChange = async (req, res) => {
   }
 
   // gen 6 digit code
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = generateOtp();
 
   try {
     const expires = new Date(Date.now() + OTP_TTL_MS);
     await HealthcareProvider.findOneAndUpdate(
       { hcpId },
       {
-        pendingEmail: { address: newEmail, code, expires },
+        pendingEmail: { address: newEmail, code, expires, attempts: 0 },
       }
     );
 
@@ -59,22 +61,18 @@ export const verifyEmailChange = async (req, res) => {
   }
 
   try {
+    const result = await verifyPendingOtp({
+      Model: HealthcareProvider,
+      filter: { hcpId },
+      field: "pendingEmail",
+      code,
+    });
+    if (result.status !== "ok") {
+      return sendOtpFailure(res, "email", result.status);
+    }
+
     const hcp = await HealthcareProvider.findOne({ hcpId });
-
-    if (!hcp || !hcp.pendingEmail.code) {
-      return res.status(404).json({ message: "No pending email change found" });
-    }
-
-    const { address, code: expectedCode, expires } = hcp.pendingEmail;
-
-    if (new Date() > expires) {
-      return res.status(410).json({ message: "Verification code expired" });
-    }
-    if (code !== expectedCode) {
-      return res.status(401).json({ message: "Invalid verification code" });
-    }
-
-    hcp.email = address;
+    hcp.email = result.pending.address;
 
     hcp.pendingEmail = { address: "", code: "", expires: null };
     await hcp.save();
@@ -99,13 +97,13 @@ export const requestPhoneChange = async (req, res) => {
     return res.status(409).json({ message: "Phone already in use" });
   }
 
-  const code = genCode();
+  const code = generateOtp();
   const expires = new Date(Date.now() + 15 * 60 * 1000);
 
   // store pendingPhone
   const updated = await HealthcareProvider.findOneAndUpdate(
     { hcpId },
-    { pendingPhone: { number: newPhone, code, expires } },
+    { pendingPhone: { number: newPhone, code, expires, attempts: 0 } },
     { new: true }
   );
   if (!updated) {
@@ -129,22 +127,18 @@ export const verifyPhoneChange = async (req, res) => {
     return res.status(400).json({ message: "code is required" });
   }
 
-  const user = await HealthcareProvider.findOne({ hcpId }).select(
-    "pendingPhone"
-  );
-  if (!user || !user.pendingPhone) {
-    return res.status(400).json({ message: "No pending phone change" });
+  const result = await verifyPendingOtp({
+    Model: HealthcareProvider,
+    filter: { hcpId },
+    field: "pendingPhone",
+    code,
+  });
+  if (result.status !== "ok") {
+    return sendOtpFailure(res, "phone", result.status);
   }
 
-  const { number, code: savedCode, expires } = user.pendingPhone;
-  if (new Date() > expires) {
-    return res.status(400).json({ message: "Verification code expired" });
-  }
-  if (code !== savedCode) {
-    return res.status(400).json({ message: "Invalid verification code" });
-  }
-
-  user.phoneNumber = number;
+  const user = await HealthcareProvider.findOne({ hcpId });
+  user.phoneNumber = result.pending.number;
   user.pendingPhone = undefined;
   await user.save();
 

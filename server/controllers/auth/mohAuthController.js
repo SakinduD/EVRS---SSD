@@ -1,11 +1,11 @@
 import MOH from "../../models/mohModel.js";
-import bcrypt from "bcryptjs";
+import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
 
 export const loginMOH = async (req, res) => {
   const { mohId, password } = req.body;
 
-  if (!mohId || !password) {
+  if (typeof mohId !== "string" || typeof password !== "string" || !mohId || !password) {
     return res
       .status(400)
       .json({ message: "MOH ID and password are required" });
@@ -13,15 +13,10 @@ export const loginMOH = async (req, res) => {
 
   try {
     const moh = await MOH.findOne({ mohId });
+    const isMatch = await checkPassword(password, moh?.password);
 
-    if (!moh) {
-      return res.status(404).json({ message: "MOH not found" });
-    }
-
-    const isMatch = await bcrypt.compare(password, moh.password);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+    if (!moh || !isMatch) {
+      return res.status(401).json({ message: INVALID_CREDENTIALS });
     }
 
     const token = jwt.sign(
@@ -39,7 +34,6 @@ export const loginMOH = async (req, res) => {
 
     res.status(200).json({
       message: "Login successful",
-      token,
       moh: {
         mohId: moh.mohId,
         name: moh.name,

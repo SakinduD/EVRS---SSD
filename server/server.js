@@ -14,6 +14,11 @@ dotenv.config();
 
 const app = express();
 
+// behind a reverse proxy, req.ip (used by the rate limiters) is the proxy unless this is set
+if (process.env.TRUST_PROXY) {
+  app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
+}
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(
