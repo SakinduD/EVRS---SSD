@@ -137,7 +137,7 @@ export const updateCitizenProfile = async (req, res) => {
   }
 };
 
-// ----- Profile Settings Section -----
+// Profile Settings Section
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 

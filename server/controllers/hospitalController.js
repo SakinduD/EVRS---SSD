@@ -9,7 +9,7 @@ import Hospital from "../models/hospitalModel.js";
 import crypto from "crypto";
 import Patient from "../models/patientModel.js";
 
-// ----- Profile Settings Section -----
+// Profile Settings Section
 
 function generateVaccinationId() {
   const digits = crypto.randomInt(1000000000, 10000000000);

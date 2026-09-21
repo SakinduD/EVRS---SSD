@@ -9,7 +9,7 @@ import MOH from "../models/mohModel.js";
 import Patient from "../models/patientModel.js";
 import crypto from "crypto";
 
-// ----- Profile Settings Section -----
+// Profile Settings Section
 
 function generateCitizenId() {
   const digits = crypto.randomInt(1000000000, 10000000000);
