@@ -48,6 +48,30 @@ if not logger.handlers:
         # starting; console logging still covers the audit trail.
         logger.warning("Could not open log file %s; logging to console only", LOG_FILE)
 
+def _bounded_int(env_var: str, default: int, minimum: int, maximum: int) -> int:
+    """Read an integer setting, refusing values outside a sane range.
+
+    The limits these settings drive are security controls, so the settings
+    themselves need bounds: a stray MAX_EVENTS_PER_REQUEST=99999999 in a .env
+    would silently remove a limit rather than adjust it, and a typo would crash
+    with a bare traceback. Both now fail loudly at startup instead.
+    """
+    raw = (os.getenv(env_var) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError(f"{env_var} must be a whole number; got {raw!r}.")
+    if not minimum <= value <= maximum:
+        raise RuntimeError(
+            f"{env_var} must be between {minimum} and {maximum}; got {value}. "
+            f"This range exists so that changing the setting cannot quietly "
+            f"remove the limit it enforces."
+        )
+    return value
+
+
 # Local-development escape hatch for the integrity checks below. Must stay false
 # in any deployed environment - it is the difference between "verified" and "trusted".
 ALLOW_UNVERIFIED_ARTIFACTS = os.getenv("ALLOW_UNVERIFIED_ARTIFACTS", "false").lower() == "true"
@@ -289,7 +313,9 @@ else:
 # request body before validation runs, so a 2 GB payload is already resident by
 # the time the model would reject it. This middleware is registered last, which
 # makes it the outermost layer, so it sees the request first.
-MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(8 * 1024 * 1024)))
+MAX_BODY_BYTES = _bounded_int(
+    "MAX_BODY_BYTES", default=8 * 1024 * 1024, minimum=1024, maximum=64 * 1024 * 1024
+)
 
 
 @app.middleware("http")
@@ -392,7 +418,9 @@ EXPECTED_COLS = [c for c in schema["input_columns"].keys() if c != "y_missed"]
 # Pydantic enforces these AFTER the body has been read into memory, so the size
 # limit in the middleware below has to sit in front of it - by the time a model
 # rejects an oversized payload, the payload is already resident.
-MAX_EVENTS_PER_REQUEST = int(os.getenv("MAX_EVENTS_PER_REQUEST", "1000"))
+MAX_EVENTS_PER_REQUEST = _bounded_int(
+    "MAX_EVENTS_PER_REQUEST", default=1000, minimum=1, maximum=10000
+)
 MAX_LIST_ITEMS = 50
 
 # Field widths, sized from what the Node backend actually sends.
