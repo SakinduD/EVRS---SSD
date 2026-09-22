@@ -4,15 +4,17 @@ import json
 import hashlib
 import logging
 import secrets
-from typing import List, Optional, Literal, Any, Dict
+from typing import Annotated, List, Optional, Literal, Any, Dict
 
 import numpy as np
 import pandas as pd
 import joblib
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # config and paths
@@ -280,6 +282,81 @@ else:
         "CORS middleware not mounted; this service is called server-to-server only."
     )
 
+
+# V15: reject oversized bodies before they are read into memory.
+#
+# Pydantic's max_length on `events` cannot help here: FastAPI buffers the whole
+# request body before validation runs, so a 2 GB payload is already resident by
+# the time the model would reject it. This middleware is registered last, which
+# makes it the outermost layer, so it sees the request first.
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(8 * 1024 * 1024)))
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH"):
+        client = request.client.host if request.client else "unknown"
+        declared = request.headers.get("content-length")
+
+        if declared is None:
+            # A chunked body carries no length, and accepting one would be the
+            # obvious way to walk straight past this check.
+            logger.warning(
+                "Rejected body without Content-Length to %s from %s",
+                request.url.path, client,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_411_LENGTH_REQUIRED,
+                content={"detail": "Length Required"},
+            )
+
+        try:
+            length = int(declared)
+        except ValueError:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Invalid Content-Length"},
+            )
+
+        if length > MAX_BODY_BYTES:
+            logger.warning(
+                "Rejected %d-byte body to %s from %s (limit %d)",
+                length, request.url.path, client, MAX_BODY_BYTES,
+            )
+            return JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content={"detail": "Payload too large"},
+            )
+
+    return await call_next(request)
+
+
+# V15: keep rejection responses small.
+#
+# FastAPI's default validation handler echoes the offending input back to the
+# caller. For a 1000-event payload that makes the error response as large as the
+# request that was just refused - free amplification for anyone probing the
+# service - and copies citizen health data into every log and proxy along the
+# way. Report where validation failed and which rule it broke; never the value.
+MAX_REPORTED_ERRORS = 10
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    errors = [
+        {
+            "loc": [str(part) for part in err.get("loc", ())],
+            "type": err.get("type"),
+            "msg": err.get("msg"),
+        }
+        for err in exc.errors()[:MAX_REPORTED_ERRORS]
+    ]
+    total = len(exc.errors())
+    body = {"detail": errors}
+    if total > MAX_REPORTED_ERRORS:
+        body["truncated"] = f"{total - MAX_REPORTED_ERRORS} further errors omitted"
+    return JSONResponse(status_code=422, content=body)
+
 # load model and schema - deserialise the verified buffer, never the path again
 try:
     model = joblib.load(io.BytesIO(_read_verified_bytes(MODEL_PATH, "MODEL")))
@@ -304,38 +381,65 @@ if "input_columns" not in schema or not isinstance(schema["input_columns"], dict
 
 EXPECTED_COLS = [c for c in schema["input_columns"].keys() if c != "y_missed"]
 
+# V15: bounds on every field the request can control.
+#
+# Nothing here was bounded before: `events` was an unlimited list, each string
+# was unlimited, and the allergy and condition lists were unlimited too. One
+# request could therefore carry as much data as the attacker cared to send, and
+# with mode="all" each event fans out to three rows before reaching pandas and
+# predict_proba. A single POST was enough to exhaust the process's memory.
+#
+# Pydantic enforces these AFTER the body has been read into memory, so the size
+# limit in the middleware below has to sit in front of it - by the time a model
+# rejects an oversized payload, the payload is already resident.
+MAX_EVENTS_PER_REQUEST = int(os.getenv("MAX_EVENTS_PER_REQUEST", "1000"))
+MAX_LIST_ITEMS = 50
+
+# Field widths, sized from what the Node backend actually sends.
+IdStr = Annotated[str, Field(max_length=64)]
+CodeStr = Annotated[str, Field(max_length=64)]
+DateStr = Annotated[str, Field(max_length=32)]
+NameStr = Annotated[str, Field(max_length=128)]
+ShortStr = Annotated[str, Field(max_length=16)]
+PhoneStr = Annotated[str, Field(max_length=32)]
+EmailStr = Annotated[str, Field(max_length=254)]
+TagStr = Annotated[str, Field(max_length=128)]
+
+
 # pydantic payloads
 class Citizen(BaseModel):
-    citizenId: str
-    birthDate: Optional[str] = None
-    district: Optional[str] = None
-    division: Optional[str] = None
-    bloodType: Optional[str] = None
-    allergies: Optional[List[str]] = None
-    medicalConditions: Optional[List[str]] = None
-    guardianPhone: Optional[str] = None
-    guardianEmail: Optional[str] = None
-    hospitalId: Optional[str] = None
-    mohId: Optional[str] = None
-    v1Code: Optional[str] = None
-    v1Date: Optional[str] = None
-    v1Location: Optional[str] = None
-    v1HcpId: Optional[str] = None
-    v2Code: Optional[str] = None
-    v2Date: Optional[str] = None
-    v2Location: Optional[str] = None
-    v2HcpId: Optional[str] = None
-    v3Code: Optional[str] = None
-    v3Date: Optional[str] = None
-    v3Location: Optional[str] = None
-    v3HcpId: Optional[str] = None
-    v4Code: Optional[str] = None
-    v4Date: Optional[str] = None
-    v4Location: Optional[str] = None
-    v4HcpId: Optional[str] = None
+    citizenId: IdStr
+    birthDate: Optional[DateStr] = None
+    district: Optional[NameStr] = None
+    division: Optional[NameStr] = None
+    bloodType: Optional[ShortStr] = None
+    allergies: Optional[List[TagStr]] = Field(default=None, max_length=MAX_LIST_ITEMS)
+    medicalConditions: Optional[List[TagStr]] = Field(
+        default=None, max_length=MAX_LIST_ITEMS
+    )
+    guardianPhone: Optional[PhoneStr] = None
+    guardianEmail: Optional[EmailStr] = None
+    hospitalId: Optional[IdStr] = None
+    mohId: Optional[IdStr] = None
+    v1Code: Optional[CodeStr] = None
+    v1Date: Optional[DateStr] = None
+    v1Location: Optional[NameStr] = None
+    v1HcpId: Optional[IdStr] = None
+    v2Code: Optional[CodeStr] = None
+    v2Date: Optional[DateStr] = None
+    v2Location: Optional[NameStr] = None
+    v2HcpId: Optional[IdStr] = None
+    v3Code: Optional[CodeStr] = None
+    v3Date: Optional[DateStr] = None
+    v3Location: Optional[NameStr] = None
+    v3HcpId: Optional[IdStr] = None
+    v4Code: Optional[CodeStr] = None
+    v4Date: Optional[DateStr] = None
+    v4Location: Optional[NameStr] = None
+    v4HcpId: Optional[IdStr] = None
 
 class ScoreRequest(BaseModel):
-    events: List[Citizen]
+    events: List[Citizen] = Field(..., min_length=1, max_length=MAX_EVENTS_PER_REQUEST)
     mode: Literal["latest", "all"] = "latest"
 
 # helper func
