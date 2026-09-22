@@ -725,8 +725,27 @@ def score_events(req: ScoreRequest):
     results = _score_dataframe(df)
     return {"results": results}
 
-@app.post("/score/events_debug", dependencies=[Depends(require_internal_token)])
+# Registered only when DEBUG_MODE is on.
+#
+# This endpoint exists to inspect the engineered features while working on the
+# model. It returns a citizen's derived age in days, blood type, district,
+# division, hospital and MOH identifiers, and a flag per allergy and per medical
+# condition - identifiable health data about a child. Authentication (V13) stops
+# an anonymous caller, but a debugging aid that is not needed in production
+# should not be reachable in production at all: if the shared token ever leaks,
+# or the Node backend is compromised, this is extra data the attacker gets for
+# free. Two layers, not one.
+@app.post(
+    "/score/events_debug",
+    dependencies=[Depends(require_internal_token)],
+    include_in_schema=DEBUG_MODE,
+)
 def score_events_debug(req: ScoreRequest):
+    if not DEBUG_MODE:
+        # Belt and braces: even if the registration above is ever changed, the
+        # handler itself refuses to answer outside development, and it refuses
+        # before doing any work on the payload.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
     if not req.events:
         raise HTTPException(status_code=400, detail="No events provided")
     rows: List[Dict[str, Any]] = []
