@@ -757,4 +757,9 @@ if __name__ == "__main__":
         host=os.getenv("HOST", "127.0.0.1"),
         port=_bounded_int("PORT", default=8081, minimum=1, maximum=65535),
         reload=DEBUG_MODE,
+        # V16: uvicorn announces itself in a `server:` header on every response.
+        # Naming the server software narrows the attacker's search before they
+        # have sent a second request, and no client here needs to know it. When
+        # launching through the uvicorn CLI instead, pass --no-server-header.
+        server_header=False,
     )
