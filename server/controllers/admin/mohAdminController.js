@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
+import { SENSITIVE_FIELDS, stripSensitive } from "../../helpers/sensitiveFields.js";
 import crypto from "crypto";
 import MOH from "../../models/mohModel.js";
 
 function generateMohId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `MOH${digits}`;
 }
 
@@ -96,7 +97,7 @@ export const getAllMOHs = async (req, res) => {
     }
 
     const mohs = await MOH.find(filter)
-      .select("-password")
+      .select(SENSITIVE_FIELDS)
       .sort({ createdAt: -1 });
 
     res.status(200).json(mohs);
@@ -108,9 +109,7 @@ export const getAllMOHs = async (req, res) => {
 
 export const getMOHById = async (req, res) => {
   try {
-    const moh = await MOH.findOne({ mohId: req.params.mohId }).select(
-      "-password"
-    );
+    const moh = await MOH.findOne({ mohId: req.params.mohId }).select(SENSITIVE_FIELDS);
 
     if (!moh) {
       return res.status(404).json({ message: "MOH not found" });
@@ -143,7 +142,7 @@ export const updateMOHById = async (req, res) => {
 
     res.status(200).json({
       message: "MOH updated successfully",
-      moh: updated,
+      moh: stripSensitive(updated),
     });
   } catch (error) {
     console.error("Update MOH error:", error);

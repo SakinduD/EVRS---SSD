@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
+import { SENSITIVE_FIELDS, stripSensitive } from "../../helpers/sensitiveFields.js";
 import crypto from "crypto";
 import HealthcareProvider from "../../models/hcpModel.js";
 
 function generateHcpId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `HCP${digits}`;
 }
 
@@ -88,7 +89,7 @@ export const getAllHCPs = async (req, res) => {
     }
 
     const hcps = await HealthcareProvider.find(filter)
-      .select("-password")
+      .select(SENSITIVE_FIELDS)
       .sort({ createdAt: -1 });
 
     res.status(200).json(hcps);
@@ -102,7 +103,7 @@ export const getHCPById = async (req, res) => {
   try {
     const hcp = await HealthcareProvider.findOne({
       hcpId: req.params.hcpId,
-    }).select("-password");
+    }).select(SENSITIVE_FIELDS);
 
     if (!hcp) {
       return res.status(404).json({ message: "Healthcare Provider not found" });
@@ -141,7 +142,7 @@ export const updateHCPById = async (req, res) => {
 
     res.status(200).json({
       message: "Healthcare Provider updated successfully",
-      hcp: updated,
+      hcp: stripSensitive(updated),
     });
   } catch (error) {
     console.error("Update HCP error:", error);
