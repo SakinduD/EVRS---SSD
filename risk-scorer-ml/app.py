@@ -344,6 +344,15 @@ async def limit_request_body(request: Request, call_next):
                 content={"detail": "Invalid Content-Length"},
             )
 
+        if length < 0:
+            # A negative length would sail past the comparison below. The server
+            # in front of us should never pass one through, but a check that
+            # depends on another layer behaving is not a check.
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Invalid Content-Length"},
+            )
+
         if length > MAX_BODY_BYTES:
             logger.warning(
                 "Rejected %d-byte body to %s from %s (limit %d)",
