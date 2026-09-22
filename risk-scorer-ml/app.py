@@ -72,6 +72,14 @@ def _bounded_int(env_var: str, default: int, minimum: int, maximum: int) -> int:
     return value
 
 
+# V16: one switch for every development-only surface.
+#
+# The service previously shipped its interactive docs, its OpenAPI schema and
+# uvicorn's auto-reloader unconditionally, and answered /health with its library
+# versions and file paths. None of that is needed to serve a request; all of it
+# tells an attacker what to aim at. They are now all off unless this is set.
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+
 # Local-development escape hatch for the integrity checks below. Must stay false
 # in any deployed environment - it is the difference between "verified" and "trusted".
 ALLOW_UNVERIFIED_ARTIFACTS = os.getenv("ALLOW_UNVERIFIED_ARTIFACTS", "false").lower() == "true"
@@ -271,7 +279,23 @@ def require_internal_token(
 
 
 # app init
-app = FastAPI(title="EVRS Miss-Next Vaccine Scorer (XGBoost)", version="1.0.0")
+app = FastAPI(
+    title="EVRS Miss-Next Vaccine Scorer (XGBoost)",
+    version="1.0.0",
+    # Serving the schema hands over every route, every field name and the exact
+    # shape of a valid request - including the name of the auth header - to
+    # anyone who asks. Useful while developing, pure reconnaissance in production.
+    docs_url="/docs" if DEBUG_MODE else None,
+    redoc_url="/redoc" if DEBUG_MODE else None,
+    openapi_url="/openapi.json" if DEBUG_MODE else None,
+)
+
+if DEBUG_MODE:
+    logger.warning(
+        "DEBUG_MODE is enabled: interactive docs, the OpenAPI schema and the "
+        "detailed health endpoint are all being served. Never enable this in a "
+        "deployed environment."
+    )
 
 # V13: CORS was allow_origins=["*"] with allow_credentials=True - a combination
 # browsers reject outright, so it was both insecure in intent and broken in
@@ -655,15 +679,37 @@ def _score_dataframe(df_events: pd.DataFrame) -> List[Dict[str, Any]]:
 # routes
 @app.get("/health")
 def health():
+    """Liveness only.
+
+    V16: this used to return the scikit-learn version and the configured model
+    and schema paths to any unauthenticated caller. A version number is the
+    first thing an attacker looks up against a CVE database, and a path tells
+    them how the filesystem is laid out. A liveness probe needs neither - it
+    needs to know the process is answering.
+    """
+    return {"ok": True}
+
+
+@app.get("/health/detail", dependencies=[Depends(require_internal_token)])
+def health_detail():
+    """The diagnostic detail that /health used to leak, behind authentication.
+
+    Paths are reported as filenames only: the caller is already trusted, but
+    there is no reason for a response to describe where the service lives on
+    disk.
+    """
     import sklearn
+
     return {
         "ok": True,
         "horizon_days": HORIZON_DAYS,
         "high_threshold": HIGH_THR,
         "med_threshold": MED_THR,
         "sklearn": sklearn.__version__,
-        "model_path": MODEL_PATH,
-        "schema_path": SCHEMA_PATH,
+        "model_file": os.path.basename(MODEL_PATH),
+        "schema_file": os.path.basename(SCHEMA_PATH),
+        "max_events_per_request": MAX_EVENTS_PER_REQUEST,
+        "max_body_bytes": MAX_BODY_BYTES,
     }
 
 @app.post("/score", dependencies=[Depends(require_internal_token)])
@@ -698,4 +744,17 @@ def score_events_debug(req: ScoreRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=int(os.getenv("PORT", "8081")), reload=True)
+
+    # V16: reload=True was hardcoded. The auto-reloader watches the filesystem
+    # and re-imports on change, which turns "can write a file here" into "can
+    # run code here" - and it loads the model once per worker, so it also
+    # tripled the startup cost of the integrity check added in V14.
+    # The import-string form makes uvicorn re-import this module, so the model
+    # is verified and deserialised twice. Only the reloader needs that form;
+    # without it, hand over the app object already loaded above.
+    uvicorn.run(
+        "app:app" if DEBUG_MODE else app,
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=_bounded_int("PORT", default=8081, minimum=1, maximum=65535),
+        reload=DEBUG_MODE,
+    )
