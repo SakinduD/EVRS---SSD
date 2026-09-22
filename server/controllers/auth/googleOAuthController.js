@@ -8,12 +8,6 @@ import Citizen from "../../models/patientModel.js";
  *
  *   GET /api/auth/oauth/google           -> redirect to Google
  *   GET /api/auth/oauth/google/callback  -> code exchange, then session cookie
- *
- * Google only proves WHO the user is. Citizen accounts are still created by
- * registration, so a Google identity can only sign in to an existing citizen:
- * first by the stored Google subject (`googleSub`), otherwise by a Google-VERIFIED
- * e-mail that matches the citizen's e-mail, in which case the subject is bound
- * to that citizen for every later login.
  */
 
 const GOOGLE_ISSUER = new URL("https://accounts.google.com");

@@ -3,7 +3,7 @@
 
 import type React from "react";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +19,17 @@ import { Eye, EyeOff, Shield } from "lucide-react";
 import api from "@/lib/api";
 import { useUser } from "@/context/UserContext";
 
+// the API redirects back to /login?error=<code> when Google sign-in fails
+const OAUTH_ERRORS: Record<string, string> = {
+  oauth_failed: "Google sign-in failed. Please try again.",
+  oauth_denied: "Google sign-in was cancelled.",
+  oauth_unverified: "Your Google account's email address is not verified.",
+  oauth_no_account:
+    "No EVRS account is linked to that Google account. Add the same email to your EVRS profile, or sign in with your Citizen ID.",
+  oauth_unavailable:
+    "Google sign-in is currently unavailable. Please use your Citizen ID and password.",
+};
+
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [citizenId, setCitizenId] = useState("");
@@ -26,6 +37,20 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const router = useRouter();
   const { refreshProfiles } = useUser();
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("error");
+    if (code && OAUTH_ERRORS[code]) {
+      setError(OAUTH_ERRORS[code]);
+      // drop the query string so a refresh does not show the message again
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
+
+  // full-page redirect: the API sends the browser to Google, then back to /dashboard
+  const handleGoogleLogin = () => {
+    window.location.href = `${api.defaults.baseURL}/auth/oauth/google`;
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,6 +163,46 @@ export default function LoginPage() {
                 Sign In
               </Button>
             </form>
+
+            <div className="relative my-5">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-primary-DEFAULT/20" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full border-primary-DEFAULT/20"
+              onClick={handleGoogleLogin}
+            >
+              <svg
+                className="mr-2 h-4 w-4"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fill="#4285F4"
+                  d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5a5.5 5.5 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.2 0 6-1.1 7.9-2.9l-3.9-3c-1.1.7-2.5 1.2-4 1.2-3.1 0-5.7-2.1-6.6-4.9H1.4v3.1A12 12 0 0 0 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.4 14.4a7.2 7.2 0 0 1 0-4.8V6.5H1.4a12 12 0 0 0 0 10.9l4-3z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.8c1.7 0 3.3.6 4.5 1.8l3.4-3.4A12 12 0 0 0 1.4 6.5l4 3.1C6.3 6.9 8.9 4.8 12 4.8z"
+                />
+              </svg>
+              Continue with Google
+            </Button>
 
             <div className="mt-6 space-y-4">
               <div className="text-center">
