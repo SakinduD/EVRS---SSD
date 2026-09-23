@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "V14 - pinned SHA-256 digests of the artifacts this service deserialises.",
+    "joblib.load() unpickles, which executes arbitrary code chosen by the file,",
+    "so app.py verifies these digests before loading and refuses to start on a",
+    "mismatch. This file is deliberately tracked in git: a digest is not a secret,",
+    "and version control makes any change to a pin visible in review.",
+    "Regenerate after retraining with: python tools/checksum_artifacts.py --write"
+  ],
+  "artifacts": {
+    "MODEL": {
+      "path": "evrs_miss_next_model.pkl",
+      "sha256": "e70c32f8c0c0448b9adc94cedbaf0e3713465d7c2638d2bfb1fa7cde8e26dbda"
+    },
+    "SCHEMA": {
+      "path": "evrs_feature_schema.json",
+      "sha256": "c7601f9974be96e0e068d4407ab62926b00e11adce986b646ccb20fedd5dba7a"
+    }
+  }
+}

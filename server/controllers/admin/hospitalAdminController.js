@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
+import { SENSITIVE_FIELDS, stripSensitive } from "../../helpers/sensitiveFields.js";
 import crypto from "crypto";
 import Hospital from "../../models/hospitalModel.js";
 
 function generateHospitalId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `H${digits}`;
 }
 
@@ -82,7 +83,7 @@ export const getAllHospitals = async (req, res) => {
     }
 
     const hospitals = await Hospital.find(filter)
-      .select("-password")
+      .select(SENSITIVE_FIELDS)
       .sort({ createdAt: -1 });
 
     res.status(200).json(hospitals);
@@ -96,7 +97,7 @@ export const getHospitalById = async (req, res) => {
   try {
     const hospital = await Hospital.findOne({
       hospitalId: req.params.hospitalId,
-    }).select("-password");
+    }).select(SENSITIVE_FIELDS);
 
     if (!hospital) {
       return res.status(404).json({ message: "Hospital not found" });
@@ -130,7 +131,7 @@ export const updateHospitalById = async (req, res) => {
 
     res.status(200).json({
       message: "Hospital updated successfully",
-      hospital: updated,
+      hospital: stripSensitive(updated),
     });
   } catch (error) {
     console.error("Update hospital error:", error);

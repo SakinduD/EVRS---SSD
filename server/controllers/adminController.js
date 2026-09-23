@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { SENSITIVE_FIELDS } from "../helpers/sensitiveFields.js";
 import crypto from "crypto";
 import Admin from "../models/adminModel.js";
 import Patient from "../models/patientModel.js";
@@ -10,7 +11,7 @@ import fetch from "node-fetch";
 import districtToProvince from "../utils/districtToProvince.js";
 
 function generateAdminId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `A${digits}`;
 }
 
@@ -69,7 +70,7 @@ export const getAllAdmins = async (req, res) => {
     }
 
     const admins = await Admin.find(filter)
-      .select("-password")
+      .select(SENSITIVE_FIELDS)
       .sort({ createdAt: -1 });
 
     res.status(200).json(admins);
@@ -128,7 +129,7 @@ export const getAdminProfile = async (req, res) => {
 
   try {
     const admin = await Admin.findOne({ adminId })
-      .select("-password -__v")
+      .select(SENSITIVE_FIELDS)
       .lean();
     res.status(200).json({
       loggedIn: true,

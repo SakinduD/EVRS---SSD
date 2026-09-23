@@ -4,3 +4,6 @@ venv/
 .venv/
 
 .env
+# runtime logs
+logs/
+*.log
