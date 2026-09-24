@@ -19,6 +19,30 @@ function generateRandomPassword(length = 10) {
   return crypto.randomBytes(length).toString("base64").slice(0, length);
 }
 
+// V10: access logging for staff citizen lookups. Cross-facility access is
+// intentional (national registry), so this does not gate the request - it
+// only records who looked up which citizen, so enumeration/abuse is
+// detectable after the fact. Never let a logging failure fail the request.
+function logCitizenAccess(req, outcome) {
+  try {
+    const { role, hcpId, hospitalId, mohId } = req.user || {};
+    const staffId = hcpId || hospitalId || mohId || null;
+    console.log(
+      JSON.stringify({
+        event: "citizen_vaccination_access",
+        timestamp: new Date().toISOString(),
+        role: role || null,
+        staffId,
+        citizenId: req.params.citizenId,
+        route: req.baseUrl + req.route.path,
+        outcome,
+      })
+    );
+  } catch {
+    // logging must never break the response
+  }
+}
+
 export const getAllVaccines = async (req, res) => {
   try {
     const { search } = req.query;
@@ -49,6 +73,7 @@ export const getVaccinationsByCitizenId = async (req, res) => {
       .lean();
 
     if (!patient) {
+      logCitizenAccess(req, "not_found");
       return res.status(404).json({ message: "Citizen not found." });
     }
 
@@ -58,6 +83,7 @@ export const getVaccinationsByCitizenId = async (req, res) => {
       .lean();
 
     if (!records || records.length === 0) {
+      logCitizenAccess(req, "no_records");
       return res.status(404).json({
         message: "No vaccination records found for this citizen.",
         patient,
@@ -80,12 +106,14 @@ export const getVaccinationsByCitizenId = async (req, res) => {
       vaccineName: vaccineMap[record.vaccineId] || "Unknown",
     }));
 
+    logCitizenAccess(req, "success");
     res.status(200).json({
       patient,
       records: enrichedRecords,
     });
   } catch (error) {
     console.error("Get citizen vaccinations error:", error);
+    logCitizenAccess(req, "error");
     res.status(500).json({ message: "Server error" });
   }
 };
