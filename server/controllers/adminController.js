@@ -505,16 +505,43 @@ export const getRisks = async (req, res) => {
     }
 
     // call fastAPI
+    const internalToken = process.env.INTERNAL_API_TOKEN;
+    if (!internalToken) {
+      throw new Error("INTERNAL_API_TOKEN is not configured");
+    }
+
     const fastApiUrl = `${process.env.FAST_API_URL}/score`;
     const response = await fetch(fastApiUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Token": internalToken,
+      },
       body: JSON.stringify(payload),
     });
     if (!response.ok) throw new Error(`FastAPI error: ${response.statusText}`);
 
-    const result = await response.json();
-    const results = result.results || [];
+    let result;
+    try {
+      result = await response.json();
+    } catch {
+      throw new Error("FastAPI returned a malformed JSON response");
+    }
+
+    if (!result || !Array.isArray(result.results)) {
+      throw new Error("FastAPI response missing a valid results array");
+    }
+
+    const results = result.results;
+    for (const r of results) {
+      if (
+        !r ||
+        typeof r.citizenId !== "string" ||
+        !["High", "Medium", "Low"].includes(r.risk_tier)
+      ) {
+        throw new Error("FastAPI response contains an invalid result entry");
+      }
+    }
 
     // stats
     const total = results.length;
