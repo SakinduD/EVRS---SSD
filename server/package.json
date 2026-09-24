@@ -8,8 +8,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:production": "node start-production.js",
     "dev": "nodemon server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
@@ -19,9 +20,9 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.0",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.16.3",
+    "mongoose": "^8.24.1",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^7.0.5",
+    "nodemailer": "^10.0.10",
     "openid-client": "^6.8.8",
     "twilio": "^5.8.0"
   },

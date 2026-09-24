@@ -9,6 +9,8 @@ import hospitalRoutes from "./routes/hospitalRoutes.js";
 import mohRoutes from "./routes/mohRoutes.js";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import { corsOptions } from "./middleware/corsOptions.js";
+import { errorHandler } from "./middleware/errorHandler.js";
 
 dotenv.config();
 
@@ -21,12 +23,7 @@ if (process.env.TRUST_PROXY) {
 
 app.use(express.json());
 app.use(cookieParser());
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL,
-    credentials: true,
-  })
-);
+app.use(cors(corsOptions()));
 
 app.get("/", (req, res) => {
   res.send("API is running...");
@@ -38,6 +35,8 @@ app.use("/api/citizen", citizenRoutes);
 app.use("/api/hcp", hcpRoutes);
 app.use("/api/hospital", hospitalRoutes);
 app.use("/api/moh", mohRoutes);
+
+app.use(errorHandler);
 
 connectDB();
 

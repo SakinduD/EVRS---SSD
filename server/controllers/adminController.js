@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { escapeRegex } from "../utils/escapeRegex.js";
 import { SENSITIVE_FIELDS } from "../helpers/sensitiveFields.js";
 import crypto from "crypto";
 import Admin from "../models/adminModel.js";
@@ -65,7 +66,8 @@ export const getAllAdmins = async (req, res) => {
     const filter = {};
 
     if (search) {
-      const regex = new RegExp(search, "i");
+      if (typeof search !== "string") return res.status(400).json({ message: "Search must be a string" });
+      const regex = new RegExp(escapeRegex(search), "i");
       filter.$or = [{ email: regex }, { adminId: regex }];
     }
 

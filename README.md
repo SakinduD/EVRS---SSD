@@ -59,11 +59,18 @@ TWILIO_AUTH_TOKEN=
 TWILIO_WHATSAPP_FROM=
 FAST_API_URL=
 FRONTEND_URL=
+NODE_ENV=development
 ```
 4. Run the backend server:
 ```
 npm run dev
 ```
+
+For production, set `NODE_ENV=production` and `FRONTEND_URL` to the exact
+frontend origin (for example, `https://app.example.com`) in the deployment
+environment. The backend rejects browser origins when `FRONTEND_URL` is absent.
+Do not use a trailing slash in the origin.
+Start the production backend with `npm run start:production`.
 
 ## Setting Up the Risk Scorer ML (FastAPI Backend)
 1. Navigate to the `risk-scorer-ml` directory:

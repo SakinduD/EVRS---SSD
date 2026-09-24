@@ -1,11 +1,12 @@
 import Admin from "../../models/adminModel.js";
 import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
+import { isNonEmptyString } from "../../utils/isNonEmptyString.js";
 
 export const loginAdmin = async (req, res) => {
   const { adminId, password } = req.body;
 
-  if (typeof adminId !== "string" || typeof password !== "string" || !adminId || !password) {
+  if (!isNonEmptyString(adminId) || !isNonEmptyString(password)) {
     return res
       .status(400)
       .json({ message: "Admin ID and password are required" });

@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { escapeRegex } from "../../utils/escapeRegex.js";
 import { SENSITIVE_FIELDS } from "../../helpers/sensitiveFields.js";
 import crypto from "crypto";
 import Patient from "../../models/patientModel.js";
@@ -174,11 +175,13 @@ export const getAllPatients = async (req, res) => {
     }
 
     if (division) {
-      filter.division = { $regex: new RegExp(division, "i") };
+      if (typeof division !== "string") return res.status(400).json({ message: "Division must be a string" });
+      filter.division = { $regex: new RegExp(escapeRegex(division), "i") };
     }
 
     if (search) {
-      const regex = new RegExp(search, "i");
+      if (typeof search !== "string") return res.status(400).json({ message: "Search must be a string" });
+      const regex = new RegExp(escapeRegex(search), "i");
       filter.$or = [
         { name: regex },
         { patientId: regex },
