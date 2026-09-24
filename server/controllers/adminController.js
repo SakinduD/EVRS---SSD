@@ -423,6 +423,52 @@ export const getVaccinationRecordsByProvince = async (req, res) => {
   }
 };
 
+const SCORE_BATCH_SIZE = 500;
+
+// V12 auth + response validation, reused for every /score batch so batching
+// cannot drift from the single-request behavior it was verified against.
+async function scoreBatch(events) {
+  const internalToken = process.env.INTERNAL_API_TOKEN;
+  if (!internalToken) {
+    throw new Error("INTERNAL_API_TOKEN is not configured");
+  }
+
+  const fastApiUrl = `${process.env.FAST_API_URL}/score`;
+  const response = await fetch(fastApiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Token": internalToken,
+    },
+    body: JSON.stringify({ mode: "latest", events }),
+  });
+  if (!response.ok) throw new Error(`FastAPI error: ${response.statusText}`);
+
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error("FastAPI returned a malformed JSON response");
+  }
+
+  if (!result || !Array.isArray(result.results)) {
+    throw new Error("FastAPI response missing a valid results array");
+  }
+
+  const results = result.results;
+  for (const r of results) {
+    if (
+      !r ||
+      typeof r.citizenId !== "string" ||
+      !["High", "Medium", "Low"].includes(r.risk_tier)
+    ) {
+      throw new Error("FastAPI response contains an invalid result entry");
+    }
+  }
+
+  return results;
+}
+
 export const getRisks = async (req, res) => {
   try {
     const patients = await Patient.find({}).lean();
@@ -504,43 +550,13 @@ export const getRisks = async (req, res) => {
       payload.events.push(patientData);
     }
 
-    // call fastAPI
-    const internalToken = process.env.INTERNAL_API_TOKEN;
-    if (!internalToken) {
-      throw new Error("INTERNAL_API_TOKEN is not configured");
-    }
-
-    const fastApiUrl = `${process.env.FAST_API_URL}/score`;
-    const response = await fetch(fastApiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Internal-Token": internalToken,
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) throw new Error(`FastAPI error: ${response.statusText}`);
-
-    let result;
-    try {
-      result = await response.json();
-    } catch {
-      throw new Error("FastAPI returned a malformed JSON response");
-    }
-
-    if (!result || !Array.isArray(result.results)) {
-      throw new Error("FastAPI response missing a valid results array");
-    }
-
-    const results = result.results;
-    for (const r of results) {
-      if (
-        !r ||
-        typeof r.citizenId !== "string" ||
-        !["High", "Medium", "Low"].includes(r.risk_tier)
-      ) {
-        throw new Error("FastAPI response contains an invalid result entry");
-      }
+    // call fastAPI in batches of SCORE_BATCH_SIZE; a failure in any batch
+    // fails the whole request rather than returning partial risk data
+    const results = [];
+    for (let i = 0; i < payload.events.length; i += SCORE_BATCH_SIZE) {
+      const batch = payload.events.slice(i, i + SCORE_BATCH_SIZE);
+      const batchResults = await scoreBatch(batch);
+      results.push(...batchResults);
     }
 
     // stats
