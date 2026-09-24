@@ -82,3 +82,16 @@ export const otpRequestLimiter = rateLimit({
   legacyHeaders: false,
   handler: tooMany("Too many code requests. Please try again later."),
 });
+
+// V10: staff citizen-vaccination lookups (HCP/Hospital/MOH). Cross-facility
+// access is intentional (national registry), so this is not an ownership
+// check - it only blunts scripted citizenId enumeration from one account
+// while staying well above normal one-patient-at-a-time clinical use.
+export const vaccinationLookupLimiter = rateLimit({
+  windowMs: 15 * MINUTE,
+  limit: 60,
+  keyGenerator: perUser,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: tooMany("Too many lookups. Please try again later."),
+});

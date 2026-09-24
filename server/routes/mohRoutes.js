@@ -11,6 +11,7 @@ import { authenticateRole, authorize } from "../middleware/auth.js";
 import {
   otpRequestLimiter,
   otpVerifyLimiter,
+  vaccinationLookupLimiter,
 } from "../middleware/rateLimiter.js";
 import {
   getAllVaccines,
@@ -22,7 +23,11 @@ const router = express.Router();
 router.use(authenticateRole("moh"), authorize("moh"));
 
 router.get("/vaccines", getAllVaccines);
-router.get("/vaccinations/:citizenId", getVaccinationsByCitizenId);
+router.get(
+  "/vaccinations/:citizenId",
+  vaccinationLookupLimiter,
+  getVaccinationsByCitizenId
+);
 router.post("/add-vaccination", addVaccination);
 router.post("/register-patient", registerPatient);
 
