@@ -1,7 +1,8 @@
 import Vaccine from "../../models/vaccineModel.js";
+import crypto from "crypto";
 
 function generateVaccineId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `VAC${digits}`;
 }
 

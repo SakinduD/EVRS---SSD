@@ -1,11 +1,11 @@
 import Citizen from "../../models/patientModel.js";
-import bcrypt from "bcryptjs";
+import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
 
 export const loginCitizen = async (req, res) => {
   const { citizenId, password } = req.body;
 
-  if (!citizenId || !password) {
+  if (typeof citizenId !== "string" || typeof password !== "string" || !citizenId || !password) {
     return res
       .status(400)
       .json({ message: "Citizen ID and password are required" });
@@ -13,15 +13,10 @@ export const loginCitizen = async (req, res) => {
 
   try {
     const citizen = await Citizen.findOne({ citizenId });
+    const isMatch = await checkPassword(password, citizen?.password);
 
-    if (!citizen) {
-      return res.status(404).json({ message: "Citizen not found" });
-    }
-
-    const isMatch = await bcrypt.compare(password, citizen.password);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+    if (!citizen || !isMatch) {
+      return res.status(401).json({ message: INVALID_CREDENTIALS });
     }
 
     const token = jwt.sign(

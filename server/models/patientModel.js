@@ -4,6 +4,8 @@ const pendingSub = {
   address: { type: String, default: "" },
   code: { type: String, default: "" },
   expires: { type: Date, default: null },
+  // wrong-code counter; the code is destroyed once MAX_OTP_ATTEMPTS is reached
+  attempts: { type: Number, default: 0 },
 };
 
 const patientSchema = new mongoose.Schema(
@@ -59,17 +61,25 @@ const patientSchema = new mongoose.Schema(
       unique: true,
       sparse: true,
     },
+    // Google (OIDC) subject; bound on the first successful "Sign in with Google"
+    googleSub: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
     // otp for email
     pendingEmail: {
       address: pendingSub.address,
       code: pendingSub.code,
       expires: pendingSub.expires,
+      attempts: pendingSub.attempts,
     },
     // otp for phone
     pendingPhone: {
       number: { type: String, default: "" },
       code: pendingSub.code,
       expires: pendingSub.expires,
+      attempts: pendingSub.attempts,
     },
     resetPassword: {
       token: { type: String },

@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
+import { SENSITIVE_FIELDS } from "../../helpers/sensitiveFields.js";
 import crypto from "crypto";
 import Patient from "../../models/patientModel.js";
 
 function generateCitizenId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `C${digits}`;
 }
 
@@ -85,7 +86,7 @@ export const getPatientByCitizenId = async (req, res) => {
   try {
     const patient = await Patient.findOne({
       citizenId: req.params.citizenId,
-    }).select("-password");
+    }).select(SENSITIVE_FIELDS);
 
     if (!patient) {
       return res.status(404).json({ message: "Patient not found" });
@@ -187,7 +188,7 @@ export const getAllPatients = async (req, res) => {
     }
 
     const patients = await Patient.find(filter)
-      .select("-password")
+      .select(SENSITIVE_FIELDS)
       .sort({ createdAt: -1 });
 
     res.status(200).json(patients);

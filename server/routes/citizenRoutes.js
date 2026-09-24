@@ -1,6 +1,10 @@
 import express from "express";
 import { authenticateRole, authorize } from "../middleware/auth.js";
 import {
+  otpRequestLimiter,
+  otpVerifyLimiter,
+} from "../middleware/rateLimiter.js";
+import {
   getCitizenVaccinations,
   updateCitizenProfile,
   requestEmailChange,
@@ -21,12 +25,12 @@ router.get("/get/profile", getCitizenProfile);
 router.put("/profile", updateCitizenProfile);
 
 // email otp req and verify
-router.post("/profile/email/request", requestEmailChange);
-router.post("/profile/email/verify", verifyEmailChange);
+router.post("/profile/email/request", otpRequestLimiter, requestEmailChange);
+router.post("/profile/email/verify", otpVerifyLimiter, verifyEmailChange);
 
 // phone otp req and verify
-router.post("/profile/phone/request", requestPhoneChange);
-router.post("/profile/phone/verify", verifyPhoneChange);
+router.post("/profile/phone/request", otpRequestLimiter, requestPhoneChange);
+router.post("/profile/phone/verify", otpVerifyLimiter, verifyPhoneChange);
 
 router.put("/profile/medical", updateMedicalInfo);
 

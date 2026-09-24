@@ -1,27 +1,28 @@
 import bcrypt from "bcryptjs";
+import {
+  generateOtp,
+  verifyPendingOtp,
+  sendOtpFailure,
+} from "../helpers/otp.js";
 import { sendWhatsAppOTP } from "../services/twilio.js";
 import Hospital from "../models/hospitalModel.js";
 import crypto from "crypto";
 import Patient from "../models/patientModel.js";
 
-// ----- Profile Settings Section -----
+// Profile Settings Section
 
 function generateVaccinationId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `VR${digits}`;
 }
 
 function generateCitizenId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `C${digits}`;
 }
 
 function generateRandomPassword(length = 10) {
   return crypto.randomBytes(length).toString("base64").slice(0, length);
-}
-
-function genCode() {
-  return ("" + Math.floor(100000 + Math.random() * 900000)).slice(0, 6);
 }
 
 export const requestPhoneChange = async (req, res) => {
@@ -37,13 +38,13 @@ export const requestPhoneChange = async (req, res) => {
     return res.status(409).json({ message: "Phone already in use" });
   }
 
-  const code = genCode();
+  const code = generateOtp();
   const expires = new Date(Date.now() + 15 * 60 * 1000);
 
   // store pendingPhone
   const updated = await Hospital.findOneAndUpdate(
     { hospitalId },
-    { pendingPhone: { number: newPhone, code, expires } },
+    { pendingPhone: { number: newPhone, code, expires, attempts: 0 } },
     { new: true }
   );
   if (!updated) {
@@ -67,20 +68,18 @@ export const verifyPhoneChange = async (req, res) => {
     return res.status(400).json({ message: "code is required" });
   }
 
-  const user = await Hospital.findOne({ hospitalId }).select("pendingPhone");
-  if (!user || !user.pendingPhone) {
-    return res.status(400).json({ message: "No pending phone change" });
+  const result = await verifyPendingOtp({
+    Model: Hospital,
+    filter: { hospitalId },
+    field: "pendingPhone",
+    code,
+  });
+  if (result.status !== "ok") {
+    return sendOtpFailure(res, "phone", result.status);
   }
 
-  const { number, code: savedCode, expires } = user.pendingPhone;
-  if (new Date() > expires) {
-    return res.status(400).json({ message: "Verification code expired" });
-  }
-  if (code !== savedCode) {
-    return res.status(400).json({ message: "Invalid verification code" });
-  }
-
-  user.phoneNumber = number;
+  const user = await Hospital.findOne({ hospitalId });
+  user.phoneNumber = result.pending.number;
   user.pendingPhone = undefined;
   await user.save();
 

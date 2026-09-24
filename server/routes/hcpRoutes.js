@@ -10,6 +10,10 @@ import {
 } from "../controllers/hcpController.js";
 import { authenticateRole, authorize } from "../middleware/auth.js";
 import {
+  otpRequestLimiter,
+  otpVerifyLimiter,
+} from "../middleware/rateLimiter.js";
+import {
   getAllVaccines,
   getStats,
   getVaccinationsByCitizenId,
@@ -26,11 +30,11 @@ router.post("/add-vaccination", addVaccination);
 router.get("/stats", getStats);
 
 router.get("/get/profile", getHCPProfile);
-router.post("/profile/email/request", requestEmailChange);
-router.post("/profile/email/verify", verifyEmailChange);
+router.post("/profile/email/request", otpRequestLimiter, requestEmailChange);
+router.post("/profile/email/verify", otpVerifyLimiter, verifyEmailChange);
 
-router.post("/profile/phone/request", requestPhoneChange);
-router.post("/profile/phone/verify", verifyPhoneChange);
+router.post("/profile/phone/request", otpRequestLimiter, requestPhoneChange);
+router.post("/profile/phone/verify", otpVerifyLimiter, verifyPhoneChange);
 
 router.put("/profile/password", changePassword);
 

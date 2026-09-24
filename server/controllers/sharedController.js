@@ -5,12 +5,12 @@ import Patient from "../models/patientModel.js";
 import VaccinationRecord from "../models/vaccinationModel.js";
 
 function generateVaccinationId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `VR${digits}`;
 }
 
 function generateCitizenId() {
-  const digits = Math.floor(1000000000 + Math.random() * 9000000000);
+  const digits = crypto.randomInt(1000000000, 10000000000);
   return `C${digits}`;
 }
 

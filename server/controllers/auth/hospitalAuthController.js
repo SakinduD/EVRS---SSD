@@ -1,11 +1,11 @@
 import Hospital from "../../models/hospitalModel.js";
-import bcrypt from "bcryptjs";
+import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
 
 export const loginHospital = async (req, res) => {
   const { hospitalId, password } = req.body;
 
-  if (!hospitalId || !password) {
+  if (typeof hospitalId !== "string" || typeof password !== "string" || !hospitalId || !password) {
     return res
       .status(400)
       .json({ message: "Hospital ID and password are required" });
@@ -13,15 +13,10 @@ export const loginHospital = async (req, res) => {
 
   try {
     const hospital = await Hospital.findOne({ hospitalId });
+    const isMatch = await checkPassword(password, hospital?.password);
 
-    if (!hospital) {
-      return res.status(404).json({ message: "Hospital not found" });
-    }
-
-    const isMatch = await bcrypt.compare(password, hospital.password);
-
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+    if (!hospital || !isMatch) {
+      return res.status(401).json({ message: INVALID_CREDENTIALS });
     }
 
     const token = jwt.sign(
@@ -39,7 +34,6 @@ export const loginHospital = async (req, res) => {
 
     res.status(200).json({
       message: "Login successful",
-      token,
       hospital: {
         hospitalId: hospital.hospitalId,
         name: hospital.name,
