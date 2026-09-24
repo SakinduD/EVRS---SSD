@@ -1,11 +1,12 @@
 import Hospital from "../../models/hospitalModel.js";
 import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
+import { isNonEmptyString } from "../../utils/isNonEmptyString.js";
 
 export const loginHospital = async (req, res) => {
   const { hospitalId, password } = req.body;
 
-  if (typeof hospitalId !== "string" || typeof password !== "string" || !hospitalId || !password) {
+  if (!isNonEmptyString(hospitalId) || !isNonEmptyString(password)) {
     return res
       .status(400)
       .json({ message: "Hospital ID and password are required" });

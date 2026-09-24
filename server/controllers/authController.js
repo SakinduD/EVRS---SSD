@@ -7,6 +7,7 @@ import Hospital from "../models/hospitalModel.js";
 import MOH from "../models/mohModel.js";
 import Admin from "../models/adminModel.js";
 import { buildResetUrl } from "../helpers/resetUrl.js";
+import { isNonEmptyString } from "../utils/isNonEmptyString.js";
 
 const RoleModel = {
   citizen: Citizen,
@@ -23,10 +24,11 @@ const RoleIdField = {
   moh: "mohId",
   admin: "adminId",
 };
+const ALLOWED_ROLES = new Set(["citizen", "hcp", "hospital", "moh", "admin"]);
 
 export async function forgotPassword(req, res) {
   const { id, role } = req.body;
-  if (!id || !role || !RoleModel[role]) {
+  if (!isNonEmptyString(id) || !isNonEmptyString(role) || !ALLOWED_ROLES.has(role)) {
     return res.status(400).json({ message: "ID and valid role are required." });
   }
 
@@ -61,7 +63,8 @@ export async function forgotPassword(req, res) {
 
 export async function resetPassword(req, res) {
   const { role, token, newPassword } = req.body;
-  if (!role || !token || !newPassword || !RoleModel[role]) {
+  if (!isNonEmptyString(role) || !ALLOWED_ROLES.has(role) ||
+      !isNonEmptyString(token) || !isNonEmptyString(newPassword)) {
     return res
       .status(400)
       .json({ message: "role, token & newPassword are required." });

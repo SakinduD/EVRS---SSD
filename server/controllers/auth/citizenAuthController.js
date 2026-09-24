@@ -1,11 +1,12 @@
 import Citizen from "../../models/patientModel.js";
 import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
+import { isNonEmptyString } from "../../utils/isNonEmptyString.js";
 
 export const loginCitizen = async (req, res) => {
   const { citizenId, password } = req.body;
 
-  if (typeof citizenId !== "string" || typeof password !== "string" || !citizenId || !password) {
+  if (!isNonEmptyString(citizenId) || !isNonEmptyString(password)) {
     return res
       .status(400)
       .json({ message: "Citizen ID and password are required" });

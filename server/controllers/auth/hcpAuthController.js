@@ -1,11 +1,12 @@
 import HCP from "../../models/hcpModel.js";
 import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
+import { isNonEmptyString } from "../../utils/isNonEmptyString.js";
 
 export const loginHCP = async (req, res) => {
   const { hcpId, password } = req.body;
 
-  if (typeof hcpId !== "string" || typeof password !== "string" || !hcpId || !password) {
+  if (!isNonEmptyString(hcpId) || !isNonEmptyString(password)) {
     return res
       .status(400)
       .json({ message: "HCP ID and password are required" });

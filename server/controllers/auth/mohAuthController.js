@@ -1,11 +1,12 @@
 import MOH from "../../models/mohModel.js";
 import { checkPassword, INVALID_CREDENTIALS } from "../../helpers/credentials.js";
 import jwt from "jsonwebtoken";
+import { isNonEmptyString } from "../../utils/isNonEmptyString.js";
 
 export const loginMOH = async (req, res) => {
   const { mohId, password } = req.body;
 
-  if (typeof mohId !== "string" || typeof password !== "string" || !mohId || !password) {
+  if (!isNonEmptyString(mohId) || !isNonEmptyString(password)) {
     return res
       .status(400)
       .json({ message: "MOH ID and password are required" });
