@@ -1,0 +1,65 @@
+Both High alerts in ZAP_after_Backend.html are false positives
+===============================================================
+
+The backend after-scan (22,956 requests) raised two High-risk alerts. Both fire
+on the same two requests, both have an empty Evidence field, and neither
+describes anything the code can do.
+
+  Path Traversal          High   3 instances
+  SQL Injection - SQLite  High   2 instances
+
+  URL        POST http://localhost:5000/api/admin/register-hospital
+  Parameter  email
+  Attack     /register-hospital
+  Evidence   (empty)
+
+  URL        POST http://localhost:5000/api/admin/register-vaccine
+  Parameter  name
+  Attack     /register-vaccine
+  Evidence   (empty)
+
+In both cases ZAP substituted the request's own path into a body field and
+concluded from the shape of the response that the field might reach a file
+system or a SQL parser. Neither exists in this application.
+
+
+1. SQL Injection - SQLite: there is no SQL engine in the stack
+--------------------------------------------------------------
+The backend stores everything in MongoDB through Mongoose. server/package.json
+declares no SQL driver, no ORM and no SQLite binding:
+
+  db driver:             mongoose
+  SQL-related packages:  NONE
+
+There is no SQL statement anywhere for an injection to alter. The rule is
+matching on response timing or shape, not on a database error.
+
+
+2. Path Traversal: the backend performs no file operation
+----------------------------------------------------------
+Searched all 50 JavaScript files under server/ (node_modules excluded) for
+every filesystem entry point:
+
+  fs.*  readFile  writeFile  createReadStream  sendFile
+  res.download  path.join  path.resolve  __dirname
+
+  Result: no match in any file.
+
+Sanity check on the same file set: 8 files match "express", so the search did
+run over real source rather than an empty path.
+
+A traversal sequence needs a file operation to traverse into. The two endpoints
+named above take a JSON body, validate it and write a Mongoose document. The
+value of `email` or `name` is never resolved as a path, because the process
+never opens a path at all.
+
+
+Conclusion
+----------
+Both are triaged as false positives. After triage the backend after-scan has
+no High-risk findings.
+
+The same reasoning, with the same method, was applied to the Path Traversal
+alert on the ML service - see traversal-fp-proof.txt. ZAP raises this rule on
+reflection rather than on a demonstrated read, and both services reflect input
+they never resolve.

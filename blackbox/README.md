@@ -33,12 +33,46 @@ They are excluded by `blackbox/**/session-data/` in the root `.gitignore`.
 | Service | Target | Scanned | High | Med | Low | Info |
 |---|---|---|---:|---:|---:|---:|
 | Frontend (Next.js) | `http://localhost:3000` | not yet re-scanned | – | – | – | – |
-| Backend (Express) | `http://localhost:5000` | not yet re-scanned | – | – | – | – |
+| Backend (Express) | `http://localhost:5000` | 25 Sep 2026 21:41 | 2 | 0 | 6 | 3 |
 | Risk scorer, no token | `http://127.0.0.1:8081` | 25 Sep 2026 20:03 | 0 | 0 | 0 | 0 |
 | Risk scorer, with token | `http://127.0.0.1:8081` | 25 Sep 2026 19:59 | 1 | 0 | 0 | 0 |
 
-The risk scorer's one remaining High is Path Traversal on `POST /score`, and it
-is a false positive — see below. After triage the risk scorer has **no genuine
+The backend's two Highs are also false positives — see below. Both services
+therefore finish with no High-risk finding that survives triage.
+
+### Backend, before against after
+
+The backend after-scan was far wider than the before-scan: 22,956 requests
+against a browse that covered all five roles, every list and detail page, the
+search and filter parameters, one create/edit/delete of each entity type and a
+password change. Counts are only comparable with that in mind — several of the
+new Lows are new because the scan reached code the before-scan never did.
+
+| Alert | Before | After | |
+|---|---:|---:|---|
+| Buffer Overflow | 5 (Med) | – | fixed |
+| CSP: Wildcard Directive | 1 (Med) | – | fixed |
+| Content Security Policy Header Not Set | 1 (Med) | – | fixed |
+| Missing Anti-clickjacking Header | 1 (Med) | – | fixed |
+| Application Error Disclosure | 10 (Low) | 1 (Low) | mostly fixed |
+| XSS Weakness (Persistent in JSON Response) | 20 (Low) | 9 (Low) | reduced |
+| Server Leaks Information via `X-Powered-By` | 74 (Low) | 81 (Low) | still open |
+| `X-Content-Type-Options` Header Missing | 53 (Low) | 62 (Low) | still open |
+| Information Disclosure - Debug Error Messages | – | 1 (Low) | newly reached |
+| Private IP Disclosure | – | 10 (Low) | newly reached |
+| Path Traversal | – | 3 (High) | **false positive** |
+| SQL Injection - SQLite | – | 2 (High) | **false positive** |
+
+**Every Medium is gone.** The four in the before-scan — the unhandled exception
+on oversized input that ZAP labels "Buffer Overflow", and the three
+security-header findings — no longer fire.
+
+**Still open on the backend**, and owned by the backend hardening work rather
+than by this scan: `X-Powered-By` is still advertised, `X-Content-Type-Options`
+is still absent on 62 responses, and one error path still returns a debug
+message and a private IP. `server/server.js` mounts `express.json`,
+`cookieParser` and `cors` but no `helmet`, and `helmet` is not in
+`server/package.json`; adding it would clear four of the six remaining Lows. After triage the risk scorer has **no genuine
 findings**. The no-token report contains no alerts at all, which is the point of
 running it: the surface an unauthenticated caller can reach is now empty.
 
@@ -58,6 +92,33 @@ the same application.
 
 **Risk scorer** — the service exposes only four endpoints, so the whole surface
 was covered by importing `/openapi.json` and scanning the resulting requests.
+
+**Backend, after-scan** — the before-scan registered six JWTs with ZAP's Header
+Based Session Management method. That no longer works: login now sets an
+httpOnly cookie and the response body carries no token. The after-scan was
+therefore driven from a real browser launched by ZAP's Manual Explore, logging
+in as each of the five roles in turn, so the cookies flow the way the
+application actually issues them.
+
+The browse deliberately covered the parameterised surface rather than only the
+landing pages: the citizen search and district/division filters, one detail
+page per entity type, one edit and one delete of a hospital and an MOH, a
+registration of each entity type, the admin password change, the Calculate Risk
+action (which is what puts `/api/admin/risks` and the ML integration into the
+scan), and a failed login. Without those the scan would not reach the access
+control that was fixed.
+
+`/api/auth/logout/*` was excluded from the active scan. ZAP will happily call a
+logout endpoint mid-scan, and every request after that would run
+unauthenticated and report 401 rather than anything useful.
+
+The scan ran against a throwaway `evrs_zaptest` database, never the shared one:
+an active scan sends thousands of `PUT` and `DELETE` requests to endpoints that
+really do delete records.
+
+Active scan: 22,956 requests against `http://localhost:5000` only. The
+`localhost:3000` node and the font and Mozilla CDNs picked up by the browser
+were left out of scope.
 
 **Risk scorer, after-scan** — run twice, from a fresh ZAP session each time, with
 `curl` sending the seed requests through the ZAP proxy on `localhost:8082`:
@@ -122,6 +183,23 @@ stated plainly rather than left for a reader to take at face value.
    real data. Reporting `ZAP-2` as fixed while `/score` still carried it would
    have been wrong, so it was fixed and a regression test added.
    Evidence: `blackbox-after/reports/nan-fix-proof.txt`.
+
+6. **"SQL Injection - SQLite" (High, ×2 on the backend) is a false positive.**
+   There is no SQL engine in the stack. `server/package.json` declares Mongoose
+   and no SQL driver, ORM or SQLite binding, so there is no statement for an
+   injection to alter. ZAP substituted the request path into a JSON body field
+   and inferred a database from the response shape; the Evidence field is empty.
+   Evidence: `blackbox-after/reports/backend-fp-proof.txt`.
+
+7. **"Path Traversal" (High, ×3 on the backend) is a false positive, for the
+   same reason as on the ML service.** All 50 JavaScript files under `server/`
+   were searched for every filesystem entry point — `fs.*`, `readFile`,
+   `writeFile`, `createReadStream`, `sendFile`, `res.download`, `path.join`,
+   `path.resolve`, `__dirname` — with no match. A sanity check on the same file
+   set matches "express" in 8 files, so the search ran over real source. A
+   traversal sequence needs a file operation to traverse into, and the process
+   never opens a path.
+   Evidence: `blackbox-after/reports/backend-fp-proof.txt`.
 
 ## Reproducing
 
