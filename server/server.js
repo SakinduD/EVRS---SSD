@@ -9,6 +9,7 @@ import hospitalRoutes from "./routes/hospitalRoutes.js";
 import mohRoutes from "./routes/mohRoutes.js";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import helmet from "helmet";
 import { corsOptions } from "./middleware/corsOptions.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
@@ -20,6 +21,21 @@ const app = express();
 if (process.env.TRUST_PROXY) {
   app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
 }
+
+// security response headers, before anything that can answer a request.
+// The ZAP scan reported the API advertising Express in X-Powered-By on 81
+// responses and omitting X-Content-Type-Options on 62; helmet covers those,
+// plus HSTS, frame options and a default CSP.
+//
+// The one default that has to be overridden: the frontend is a different
+// origin and sends cookies, and helmet's same-origin resource policy would
+// refuse those responses. CORS, configured below, is what decides who may
+// call this API.
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
 
 app.use(express.json());
 app.use(cookieParser());

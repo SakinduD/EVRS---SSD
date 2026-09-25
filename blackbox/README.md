@@ -41,7 +41,7 @@ They are excluded by `blackbox/**/session-data/` in the root `.gitignore`.
 | Service | Target | Scanned | High | Med | Low | Info |
 |---|---|---|---:|---:|---:|---:|
 | Frontend (Next.js) | `http://localhost:3000` | 25 Sep 2026 22:41 | 0 | 3 | 1 | 4 |
-| Backend (Express) | `http://localhost:5000` | 25 Sep 2026 21:41 | 2 | 0 | 6 | 3 |
+| Backend (Express) | `http://localhost:5000` | 26 Sep 2026 03:30 | 1 | 0 | 2 | 3 |
 | Risk scorer, no token | `http://127.0.0.1:8081` | 26 Sep 2026 00:07 | 0 | 0 | 0 | 0 |
 | Risk scorer, with token | `http://127.0.0.1:8081` | 26 Sep 2026 00:14 | 1 | 0 | 0 | 0 |
 
@@ -98,27 +98,34 @@ new Lows are new because the scan reached code the before-scan never did.
 | CSP: Wildcard Directive | 1 (Med) | – | fixed |
 | Content Security Policy Header Not Set | 1 (Med) | – | fixed |
 | Missing Anti-clickjacking Header | 1 (Med) | – | fixed |
-| Application Error Disclosure | 10 (Low) | 1 (Low) | mostly fixed |
-| XSS Weakness (Persistent in JSON Response) | 20 (Low) | 9 (Low) | reduced |
-| Server Leaks Information via `X-Powered-By` | 74 (Low) | 81 (Low) | still open |
-| `X-Content-Type-Options` Header Missing | 53 (Low) | 62 (Low) | still open |
-| Information Disclosure - Debug Error Messages | – | 1 (Low) | newly reached |
-| Private IP Disclosure | – | 10 (Low) | newly reached |
+| Server Leaks Information via `X-Powered-By` | 74 (Low) | – | fixed |
+| `X-Content-Type-Options` Header Missing | 53 (Low) | – | fixed |
+| Application Error Disclosure | 10 (Low) | – | fixed |
+| XSS Weakness (Persistent in JSON Response) | 20 (Low) | 11 (Low) | reduced, still open |
+| Private IP Disclosure | – | 13 (Low) | newly reached |
 | Path Traversal | – | 3 (High) | **false positive** |
-| SQL Injection - SQLite | – | 2 (High) | **false positive** |
 
-**Every Medium is gone.** The four in the before-scan — the unhandled exception
-on oversized input that ZAP labels "Buffer Overflow", and the three
-security-header findings — no longer fire.
+**Every Medium is gone, and so are both header findings.** The four Mediums in
+the before-scan — the unhandled exception on oversized input that ZAP labels
+"Buffer Overflow", and the three security-header findings — no longer fire, and
+neither do `X-Powered-By` or `X-Content-Type-Options`.
 
-**Still open on the backend**, and owned by the backend hardening work rather
-than by this scan: `X-Powered-By` is still advertised, `X-Content-Type-Options`
-is still absent on 62 responses, and one error path still returns a debug
-message and a private IP. `server/server.js` mounts `express.json`,
-`cookieParser` and `cors` but no `helmet`, and `helmet` is not in
-`server/package.json`; adding it would clear four of the six remaining Lows. After triage the risk scorer has **no genuine
-findings**. The no-token report contains no alerts at all, which is the point of
-running it: the surface an unauthenticated caller can reach is now empty.
+`server/server.js` mounted `express.json`, `cookieParser` and `cors` and no
+`helmet`, which is why the first after-scan still reported the headers. Helmet
+is now mounted ahead of them, with `crossOriginResourcePolicy` set to
+`cross-origin` because the frontend is a different origin and sends cookies —
+the default would have refused every API call the application makes. The
+backend was re-scanned afterwards with the same five-role browse.
+Evidence: `blackbox-after/proof/backend-headers-proof.txt`.
+
+**Still open**, and about response bodies rather than headers, so not something
+a header middleware can reach: reflected input echoed back in JSON (11), and an
+internal address appearing in a response (13).
+
+The first after-scan also raised `SQL Injection - SQLite` twice; this one does
+not raise it at all. Nothing in the stack changed that could affect it — there
+is still no SQL engine anywhere in it — so the alert not reappearing is further
+evidence that it was timing-sensitive rather than real.
 
 ## How each scan was set up
 
@@ -226,6 +233,17 @@ This is worth stating next to the alert counts. A clean after-scan means the
 service resists what a scanner knows how to send; it does not mean the service
 is sound. The most serious finding in the risk scorer is one no scanner raised.
 
+**A browser-driven scan only reaches what the interface offers.** The backend
+after-scan was driven by browsing the application as each role, which is what
+makes its cookies and its role checks realistic. The cost is that endpoints the
+interface never calls are never scanned. `PUT /api/admin/patient/:citizenId`
+and `DELETE /api/admin/patient/:citizenId` both exist and both enforce access
+control, but no page in `client/` calls either one: the citizens screen offers
+a list, a search and a registration, and nothing else. They are absent from the
+Sites tree for that reason and not because they are safe. Anyone holding a
+session can still call them directly, so the access control on them is real and
+untested by this scan.
+
 ### Before-scan
 
 1. **Four of the risk-scorer alerts were raised manually.** `V13a`, `V13b`,
@@ -271,6 +289,9 @@ is sound. The most serious finding in the risk scorer is one no scanner raised.
    and no SQL driver, ORM or SQLite binding, so there is no statement for an
    injection to alter. ZAP substituted the request path into a JSON body field
    and inferred a database from the response shape; the Evidence field is empty.
+   The re-scan after the header fix does not raise it at all, although nothing
+   in the stack changed that could affect it, which is further evidence that the
+   rule was firing on timing rather than on a database.
    Evidence: `blackbox-after/proof/backend-fp-proof.txt`.
 
 7. **"Path Traversal" (High, ×3 on the backend) is a false positive, for the
@@ -339,6 +360,14 @@ are in `risk-scorer-ml/app.py`:
   the handler return 404, which meant the token check answered first and an
   anonymous caller got 401 - telling them the endpoint was there. Described
   under "How each scan was set up" above.
+
+One change was made in `server/server.js`: `helmet` mounted ahead of the body
+parser and CORS, with `crossOriginResourcePolicy` set to `cross-origin`. The
+frontend is a different origin and sends cookies, and helmet's default of
+`same-origin` would have refused every API call the application makes — a fix
+that looks correct until the application is actually used. CORS, configured
+immediately below it, is what decides who may call the API.
+Evidence: `blackbox-after/proof/backend-headers-proof.txt`.
 
 One change was made in `client/next.config.ts`: `poweredByHeader: false`
 plus a `headers()` block carrying the CSP, `X-Frame-Options`,
