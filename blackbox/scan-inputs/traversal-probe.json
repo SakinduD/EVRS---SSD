@@ -1,0 +1,20 @@
+{
+  "mode": "latest",
+  "events": [
+    {
+      "citizenId": "../../../../etc/passwd",
+      "birthDate": "2023-01-10",
+      "district": "../../../../windows/win.ini",
+      "division": "....//....//app.py",
+      "bloodType": "O+",
+      "allergies": ["../../artifacts.lock.json"],
+      "medicalConditions": [],
+      "hospitalId": "..%2f..%2f..%2fetc%2fpasswd",
+      "mohId": null,
+      "v1Code": "BCG",
+      "v1Date": "2023-01-15",
+      "v1Location": "../../evrs_miss_next_model.pkl",
+      "v1HcpId": "HCP001"
+    }
+  ]
+}

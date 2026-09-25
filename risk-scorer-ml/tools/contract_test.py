@@ -70,6 +70,30 @@ NODE_PAYLOAD = {
             "hospitalId": None,
             "mohId": None,
         },
+        {
+            # A citizen whose dose was recorded without a vaccine code. Together
+            # with CTR-0001, which has one, this makes the batch *mixed*, and a
+            # mixed column is the only case where pandas turns the missing value
+            # into NaN. NaN is not JSON, so before the _json_safe() guard this
+            # single row turned the whole batch into a 500. Every batch the
+            # backend sends is mixed; neither fixture above was, which is how
+            # the bug reached production behaviour unnoticed.
+            "citizenId": "CTR-0003",
+            "birthDate": "2023-02-10",
+            "district": "Gampaha",
+            "division": "Negombo",
+            "bloodType": "A+",
+            "allergies": [],
+            "medicalConditions": [],
+            "guardianPhone": None,
+            "guardianEmail": None,
+            "hospitalId": "HOSP002",
+            "mohId": None,
+            "v1Code": None,
+            "v1Date": "2023-02-15",
+            "v1Location": "Negombo Base Hospital",
+            "v1HcpId": "HCP002",
+        },
     ],
 }
 
@@ -164,7 +188,18 @@ def main() -> int:
           "CTR-0001" in scored_ids,
           f"scored: {sorted(i for i in scored_ids if i)}")
 
-    # 7. The auth contract itself: the same payload without the header is refused.
+    # 7. No result value may be NaN. Starlette serialises with allow_nan=False,
+    #    so one NaN anywhere in the body is an unhandled 500 rather than a
+    #    malformed field. CTR-0003 above is what makes this reachable.
+    nan_fields = sorted({
+        f"result[{i}].{k}"
+        for i, r in enumerate(results)
+        for k, v in r.items()
+        if isinstance(v, float) and v != v
+    })
+    check("no NaN in any result value", not nan_fields, f"NaN at {nan_fields}" if nan_fields else "")
+
+    # 8. The auth contract itself: the same payload without the header is refused.
     status_noauth, _ = post(endpoint, NODE_PAYLOAD, None)
     check("same payload without the token is refused",
           status_noauth == 401,

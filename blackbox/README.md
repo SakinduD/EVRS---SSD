@@ -28,6 +28,20 @@ They are excluded by `blackbox/**/session-data/` in the root `.gitignore`.
 | Backend (Express)  | `http://localhost:5000` | 25 Sep 2026 04:48 | 0 | 4 | 4 | 2 |
 | Risk scorer (FastAPI) | `http://127.0.0.1:8081` | 24 Sep 2026 22:36 | 1 | 2 | 5 | 0 |
 
+## Targets and results (after)
+
+| Service | Target | Scanned | High | Med | Low | Info |
+|---|---|---|---:|---:|---:|---:|
+| Frontend (Next.js) | `http://localhost:3000` | not yet re-scanned | – | – | – | – |
+| Backend (Express) | `http://localhost:5000` | not yet re-scanned | – | – | – | – |
+| Risk scorer, no token | `http://127.0.0.1:8081` | 25 Sep 2026 20:03 | 0 | 0 | 0 | 0 |
+| Risk scorer, with token | `http://127.0.0.1:8081` | 25 Sep 2026 19:59 | 1 | 0 | 0 | 0 |
+
+The risk scorer's one remaining High is Path Traversal on `POST /score`, and it
+is a false positive — see below. After triage the risk scorer has **no genuine
+findings**. The no-token report contains no alerts at all, which is the point of
+running it: the surface an unauthenticated caller can reach is now empty.
+
 ## How each scan was set up
 
 **Backend** — authenticated. Six accounts (one per role) were created in a
@@ -45,10 +59,31 @@ the same application.
 **Risk scorer** — the service exposes only four endpoints, so the whole surface
 was covered by importing `/openapi.json` and scanning the resulting requests.
 
+**Risk scorer, after-scan** — run twice, from a fresh ZAP session each time, with
+`curl` sending the seed requests through the ZAP proxy on `localhost:8082`:
+
+- **Run A, no token.** `/score` and `/score/events_debug` without the internal
+  token, plus `/health`, `/health/detail`, `/docs` and `/openapi.json`. Expected
+  and observed: `200, 401, 404, 404, 401, 404`. Report: `ZAP_after_ML_noauth.html`.
+- **Run B, with token.** The same surface authenticated, seeded with three
+  payloads from `scan-inputs/`: the ordinary one the backend sends, the mixed
+  batch that reproduced the NaN crash, and the traversal probe. All five requests
+  returned 200. Report: `ZAP_after_ML.html`.
+
+`/openapi.json` could not be imported this time — it now returns 404, because the
+schema is no longer published. The endpoint list was therefore driven by `curl`
+rather than by ZAP's OpenAPI import.
+
+A ZAP Replacer rule was tried first for the token and did not apply; sending the
+`X-Internal-Token` header directly from `curl` through the proxy worked and is
+what the reports reflect.
+
 ## Reading the reports honestly
 
-Three things in the before-reports need stating plainly rather than being taken
-at face value:
+Some findings in these reports are not what their titles say. Each one below is
+stated plainly rather than left for a reader to take at face value.
+
+### Before-scan
 
 1. **Four of the risk-scorer alerts were raised manually.** `V13a`, `V13b`,
    `V16` and `ZAP-2` carry no Plugin Id, because ZAP has no scan rule for
@@ -67,6 +102,27 @@ at face value:
    Every hit is inside Next.js's own development bundles, not application
    source. Triaged as a false positive.
 
+### After-scan
+
+4. **"Path Traversal" (6, High, ×3 on `POST /score`) is a false positive.** The
+   handler performs no file operation. An AST walk over `app.py` shows the four
+   request handlers contain zero file-opening calls: every read is either at
+   import time or inside the integrity helpers, which no request can reach. Sent
+   a traversal sequence in every string field the endpoint accepts and the
+   response echoed the value back as a citizen id with no file content anywhere.
+   ZAP is matching on the reflection, not on a read.
+   Evidence: `blackbox-after/reports/traversal-fp-proof.txt`.
+
+5. **`ZAP-2` was still present when the after-scan began, and was fixed on
+   25 Sep 2026 before the reports above were generated.** The before-scan found
+   an unhandled `ValueError` ("NaN values are not JSON compliant") on
+   `/score/events_debug`. That endpoint was removed, but the same defect survived
+   in the response builder of `POST /score`, the endpoint the Node backend
+   actually calls, and surfaced as a 500 on the admin Manage Risks page against
+   real data. Reporting `ZAP-2` as fixed while `/score` still carried it would
+   have been wrong, so it was fixed and a regression test added.
+   Evidence: `blackbox-after/reports/nan-fix-proof.txt`.
+
 ## Reproducing
 
 ```
@@ -79,7 +135,32 @@ git worktree add ../evrs-baseline 41e13ae
 #    Report > Generate Report > HTML, into the matching reports/ folder
 ```
 
-For the **after** scan of the risk scorer, run it twice: once with no
-`X-Internal-Token` header (every request should be refused, which is what
-demonstrates the fix) and once with the token set as a ZAP Replacer rule (which
-shows no new defects behind the authentication).
+The seed payloads for the risk-scorer after-scan are committed under
+`scan-inputs/`, so both runs can be repeated exactly:
+
+| File | What it is for |
+|---|---|
+| `score-payload.json` | One citizen, shaped the way `adminController.js` sends them |
+| `nan-probe.json` | Two citizens, one with a vaccine code and one without — a *mixed* batch, which is the only case that reproduced the NaN crash |
+| `traversal-probe.json` | A traversal sequence in every string field the endpoint accepts |
+
+## Two changes made between the before and after scans
+
+Both were found while preparing the after-scan rather than by ZAP itself, and
+both are in `risk-scorer-ml/app.py`:
+
+- `_json_safe()` in the response builder, which maps a pandas missing value onto
+  `None`. pandas only produces `NaN` for a *mixed* column, so a single-citizen
+  fixture never reproduced it and every batch from the backend did. This is the
+  `ZAP-2` fix described above.
+- `security_headers()` middleware, setting `X-Content-Type-Options: nosniff`.
+  ZAP reported the missing header on `/health`, `/health/detail` and `/score`.
+  The practical risk was close to nil — the scorer listens on loopback, only the
+  backend calls it, and no browser renders its JSON — but that reasoning depends
+  on the current deployment, and the header costs one line. It is registered
+  outside the body-size middleware so it reaches every response, including the
+  401s, the 413 and the validation 422s.
+  Evidence: `blackbox-after/reports/nosniff-proof.txt`.
+
+Both changes were made *before* the after-scan reports above were generated, so
+the reports describe the code as it stands.

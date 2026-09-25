@@ -390,6 +390,26 @@ async def limit_request_body(request: Request, call_next):
     return await call_next(request)
 
 
+# V16 (defence in depth): declare the response content type as final.
+#
+# Registered after limit_request_body, so it is the outermost of the two and
+# sets the header on every response the service produces - including the 401s,
+# the 413 above and the validation 422s, not just the scored 200s.
+#
+# ZAP raises X-Content-Type-Options Header Missing on /health, /health/detail
+# and /score. The practical risk here is close to nil: the scorer listens on
+# loopback, only the Node backend calls it, and no browser ever renders its
+# JSON. But the reasoning that makes it harmless is all about the current
+# deployment, and a deployment can change without anyone revisiting this file.
+# The header costs one line and removes the argument entirely, so the after-scan
+# reports no genuine findings rather than one we talked our way out of.
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 # V15: keep rejection responses small.
 #
 # FastAPI's default validation handler echoes the offending input back to the
@@ -534,6 +554,27 @@ def _tier(p: float) -> str:
         return "Medium"
     return "Low"
 
+def _json_safe(value: Any) -> Any:
+    """Map a pandas missing value onto None so it can be serialised.
+
+    Starlette renders responses with json.dumps(allow_nan=False), so a single
+    NaN reaching the response body raises ValueError and turns a scored batch
+    into an unhandled 500. pandas only produces that NaN for a *mixed* column:
+    if no citizen in the batch has a vaccine code the column keeps dtype object
+    and None survives, but if some do, the column is typed and the missing ones
+    become NaN. Every real batch from the backend is mixed, which is why the
+    single-citizen fixtures never caught this.
+    """
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        # Not a scalar pandas can test (a list, say); it is not a missing value.
+        pass
+    return value
+
 def _engineer_events_from_wide(c: Citizen, mode: str) -> List[Dict[str, Any]]:
     """Build index-dose events from wide v1..v4 for a citizen."""
     doses = []
@@ -665,9 +706,9 @@ def _score_dataframe(df_events: pd.DataFrame) -> List[Dict[str, Any]]:
 
         t = _tier(float(p))
         out.append({
-            "citizenId": r.get("citizenId"),
+            "citizenId": _json_safe(r.get("citizenId")),
             "dose_number": int(r["dose_number"]) if pd.notna(r.get("dose_number")) else None,
-            "index_v_code": r.get("index_v_code"),
+            "index_v_code": _json_safe(r.get("index_v_code")),
             "index_v_date": r["index_v_date"].date().isoformat() if pd.notna(r.get("index_v_date")) else None,
             "risk_prob": float(p),
             "risk_tier": t,

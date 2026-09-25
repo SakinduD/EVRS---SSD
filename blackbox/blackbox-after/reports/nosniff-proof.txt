@@ -1,0 +1,35 @@
+X-Content-Type-Options: nosniff on every response
+=================================================
+
+The ML after-scan's only genuine finding was ZAP's "X-Content-Type-Options
+Header Missing" on /health, /health/detail and /score. It was fixed rather
+than accepted.
+
+The practical risk was close to nil: the scorer listens on loopback, only the
+Node backend calls it, and no browser renders its JSON. But that reasoning
+depends entirely on the current deployment, and a deployment can change
+without anyone revisiting the file. The header costs one line.
+
+Fix
+---
+app.py: security_headers() middleware, registered after limit_request_body so
+it is the outermost of the two and therefore sets the header on every response
+the service produces - not only the scored 200s, but the 401s, the 404s, the
+413 from the body-size limit and the 422s from validation.
+
+Verification
+------------
+Checked against the running service. Column 2 is the status code, column 3 the
+response header:
+
+  GET  /health                     200  x-content-type-options: nosniff
+  GET  /health/detail no token     401  x-content-type-options: nosniff
+  GET  /health/detail + token      200  x-content-type-options: nosniff
+  GET  /docs                       404  x-content-type-options: nosniff
+  POST /score no token             401  x-content-type-options: nosniff
+  POST /score + token              200  x-content-type-options: nosniff
+  POST /score invalid body         422  x-content-type-options: nosniff
+  POST /score oversized length     413  x-content-type-options: nosniff
+
+All eight carry the header. The status codes are unchanged, so the middleware
+adds the header without altering what the service accepts or refuses.

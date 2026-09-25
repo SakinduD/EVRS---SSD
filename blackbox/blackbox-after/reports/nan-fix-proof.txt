@@ -1,0 +1,89 @@
+ZAP-2 follow-up: unhandled NaN in POST /score
+=============================================
+
+The before-scan raised an unhandled ValueError on /score/events_debug ("NaN
+values are not JSON compliant", HTTP 500). That endpoint was removed, but the
+same defect survived in the response builder of POST /score, which is the
+endpoint the Node backend actually calls. It was found when the admin
+"Manage Risks" page failed with a network error against the real database.
+
+Root cause
+----------
+_score_dataframe() guarded dose_number and index_v_date with pd.notna(), but
+returned citizenId and index_v_code straight off the row. pandas only produces
+NaN for a *mixed* column: if no citizen in the batch has a vaccine code the
+column keeps dtype object and None survives, but if some do, the column is
+typed and the missing ones become NaN. Starlette renders responses with
+json.dumps(allow_nan=False), so one NaN turns the whole batch into a 500.
+
+Every batch the backend sends is mixed. Every fixture in the test suite was
+not, which is why the tests passed while the feature was broken.
+
+  pandas 3.0.6 behaviour, column "index_v_code":
+    all None         -> dtype object  -> None   (serialises)
+    mixed None/str   -> dtype str     -> nan    (raises)
+    all str          -> dtype str     -> 'BCG'  (serialises)
+
+Observed failure (uvicorn console, real database batch)
+-------------------------------------------------------
+  INFO:     127.0.0.1:62213 - "POST /score HTTP/1.1" 500 Internal Server Error
+  ERROR:    Exception in ASGI application
+  Traceback (most recent call last):
+    ...
+    File ".../starlette/responses.py", line 195, in render
+      return json.dumps(
+    ...
+  ValueError: Out of range float values are not JSON compliant: nan
+
+  Backend side (server/controllers/adminController.js):
+    Error in api: Error: FastAPI error: Internal Server Error
+        at scoreBatch (adminController.js:447:27)
+        at async getRisks (adminController.js:560:28)
+
+Fix
+---
+app.py: added _json_safe(), which maps a pandas missing value onto None, and
+applied it to citizenId and index_v_code in _score_dataframe().
+
+Reproduction
+------------
+Payload: blackbox/scan-inputs/nan-probe.json
+  NAN-PROBE-1  v1Code = "BCG"   }  mixed batch: this is what makes the
+  NAN-PROBE-2  v1Code = null    }  column typed and the missing value NaN
+
+  curl -X POST http://127.0.0.1:8081/score \
+       -H "Content-Type: application/json" \
+       -H "X-Internal-Token: <redacted>" \
+       --data @blackbox/scan-inputs/nan-probe.json
+
+BEFORE the fix
+--------------
+  Internal Server Error
+  HTTP 500
+
+AFTER the fix
+-------------
+  {"results":[{"citizenId":"NAN-PROBE-1","dose_number":1,"index_v_code":"BCG","index_v_date":"2023-01-15","risk_prob":0.3816591699918111,"risk_tier":"Medium","due_by":"2023-05-15","recommended_action":"WhatsApp + SMS"},{"citizenId":"NAN-PROBE-2","dose_number":1,"index_v_code":null,"index_v_date":"2023-02-15","risk_prob":0.4497736692428589,"risk_tier":"Medium","due_by":"2023-06-15","recommended_action":"WhatsApp + SMS"}]}
+    HTTP 200
+
+  index_v_code is now null rather than NaN, and the batch serialises.
+  The admin Manage Risks page renders against the real database again.
+
+Regression test
+---------------
+tools/contract_test.py gained citizen CTR-0003 (a dose with no vaccine code),
+which makes its batch mixed, plus an explicit assertion that no result value
+is NaN. Before the fix this payload returned 500 and the run failed at the
+first check.
+
+  pass  Node-shaped payload accepted  HTTP 200
+  pass  response has a 'results' array
+  pass  result[0] has all mapped fields
+  pass  result[1] has all mapped fields
+  pass  risk_tier values are High/Medium/Low  got ['Medium']
+  pass  risk_prob is numeric
+  pass  citizen with no vaccination history handled  scored: ['CTR-0001', 'CTR-0003']
+  pass  no NaN in any result value
+  pass  same payload without the token is refused  HTTP 401
+  
+  Contract holds: the scorer answers what adminController.js expects.

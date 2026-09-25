@@ -1,0 +1,36 @@
+Path Traversal (ZAP alert 6) on POST /score is a false positive
+===============================================================
+
+ZAP raised Path Traversal at High risk against POST /score. It is a false
+positive: /score has no file operation on any request path. The alert fires on
+a reflection, not on a read.
+
+Static proof
+------------
+An AST walk over risk-scorer-ml/app.py shows the four request handlers -
+health(), health_detail(), score_events() and score_events_debug() - contain
+zero file-opening calls. Every read in the module is either at import time
+(the model and schema, lines 421 and 431) or inside the integrity helpers
+_load_lockfile() and _read_verified_bytes(), which no request can reach.
+
+Empirical proof
+---------------
+Payload: blackbox/scan-inputs/traversal-probe.json, which carries a traversal
+sequence in every string field the handler accepts:
+
+  citizenId    ../../../../etc/passwd
+  district     ../../../../windows/win.ini
+  division     ....//....//app.py
+  hospitalId   ..%2f..%2f..%2fetc%2fpasswd
+  v1Location   ../../evrs_miss_next_model.pkl
+
+Response:
+  {"results":[{"citizenId":"../../../../etc/passwd","dose_number":1,"index_v_code":"BCG","index_v_date":"2023-01-15","risk_prob":0.39871252576510113,"risk_tier":"Medium","due_by":"2023-05-15","recommended_action":"WhatsApp + SMS"}]}
+    HTTP 200
+
+The traversal string comes back as the citizenId it was sent as. No file
+content appears anywhere in the response, and no file is opened. The service
+treats these fields as opaque labels and as model features; it never resolves
+them as paths.
+
+Triaged as a false positive in blackbox/README.md.

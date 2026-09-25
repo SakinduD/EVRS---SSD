@@ -1,0 +1,26 @@
+{
+  "mode": "latest",
+  "events": [
+    {
+      "citizenId": "CTR-0001",
+      "birthDate": "2023-01-10",
+      "district": "Colombo",
+      "division": "Dehiwala",
+      "bloodType": "O+",
+      "allergies": ["eggs"],
+      "medicalConditions": ["asthma"],
+      "guardianPhone": "0771234567",
+      "guardianEmail": "guardian@example.com",
+      "hospitalId": "HOSP001",
+      "mohId": null,
+      "v1Code": "BCG",
+      "v1Date": "2023-01-15",
+      "v1Location": "Colombo General Hospital",
+      "v1HcpId": "HCP001",
+      "v2Code": "OPV",
+      "v2Date": "2023-03-20",
+      "v2Location": "Colombo General Hospital",
+      "v2HcpId": "HCP001"
+    }
+  ]
+}

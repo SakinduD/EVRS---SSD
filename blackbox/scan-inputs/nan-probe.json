@@ -1,0 +1,35 @@
+{
+  "mode": "latest",
+  "events": [
+    {
+      "citizenId": "NAN-PROBE-1",
+      "birthDate": "2023-01-10",
+      "district": "Colombo",
+      "division": "Dehiwala",
+      "bloodType": "O+",
+      "allergies": [],
+      "medicalConditions": [],
+      "hospitalId": "HOSP001",
+      "mohId": null,
+      "v1Code": "BCG",
+      "v1Date": "2023-01-15",
+      "v1Location": "Colombo General Hospital",
+      "v1HcpId": "HCP001"
+    },
+    {
+      "citizenId": "NAN-PROBE-2",
+      "birthDate": "2023-02-10",
+      "district": "Gampaha",
+      "division": "Negombo",
+      "bloodType": "A+",
+      "allergies": [],
+      "medicalConditions": [],
+      "hospitalId": "HOSP002",
+      "mohId": null,
+      "v1Code": null,
+      "v1Date": "2023-02-15",
+      "v1Location": "Negombo Base Hospital",
+      "v1HcpId": "HCP002"
+    }
+  ]
+}
