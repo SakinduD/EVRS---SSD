@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from dotenv import load_dotenv
@@ -87,6 +88,9 @@ VALID_TIERS = {"High", "Medium", "Low"}
 
 
 def post(url: str, body: dict, token: str | None):
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        print(f"FAIL  refusing non-HTTP(S) url: {url}")
+        sys.exit(2)
     headers = {"Content-Type": "application/json"}
     if token:
         headers[TOKEN_HEADER] = token
@@ -94,6 +98,7 @@ def post(url: str, body: dict, token: str | None):
         url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST"
     )
     try:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(request, timeout=60) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as err:
