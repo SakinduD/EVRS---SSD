@@ -1,0 +1,24 @@
+TEST accounts used for the authenticated ZAP backend scan.
+
+These existed only in the throwaway `evrs_zaptest` database, which is not part
+of the repository. Passwords and JWTs are redacted here: the point of this file
+is to record that the scan ran as each role, not to let anyone repeat it with
+these exact credentials. Recreate equivalent accounts to reproduce the scan.
+
+Role       Identifier          Password
+---------  ------------------  ----------
+Admin      A1000000001         <redacted>
+Citizen1   C8626774853         <redacted>
+Citizen2   C7833895047         <redacted>
+HCP        HCP3894870715       <redacted>
+Hospital   H4418087523         <redacted>
+MOH        MOH6678844652       <redacted>
+
+Fixture records referenced by the scanned URLs:
+  VaccineId       VAC1184428212
+  VaccinationId   VR5458326897
+
+Session JWTs (one per role, 7-day expiry): <redacted>
+ZAP held these in the Header Based Session Management method, which is why the
+scan reached role-restricted endpoints such as /api/admin/patients and
+/api/moh/vaccinations/* rather than stopping at the login pages.
