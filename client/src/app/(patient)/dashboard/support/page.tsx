@@ -31,7 +31,7 @@ export default function SupportPage() {
         {/* header */}
         <div>
           <h1 className="text-2xl font-bold text-primary-DEFAULT">
-            Help & Support
+            Help &amp; Support
           </h1>
           <p className="text-muted-foreground">
             Get assistance with your health portal and vaccination records

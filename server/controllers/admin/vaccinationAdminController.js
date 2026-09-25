@@ -1,5 +1,5 @@
 import VaccinationRecord from "../../models/vaccinationModel.js";
-import { escapeRegex } from "../../utils/escapeRegex.js";
+import { literalSearch } from "../../utils/escapeRegex.js";
 import crypto from "crypto";
 
 function generateVaccinationId() {
@@ -73,7 +73,7 @@ export const getAllVaccinations = async (req, res) => {
     }
     if (search) {
       if (typeof search !== "string") return res.status(400).json({ message: "Search must be a string" });
-      const regex = new RegExp(escapeRegex(search), "i");
+      const regex = literalSearch(search);
       filter.$or = [
         { citizenId: regex },
         { citizenName: regex },

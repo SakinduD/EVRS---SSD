@@ -280,7 +280,7 @@ export default function HomePage() {
             </div>
 
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold">Security & Trust</h3>
+              <h3 className="text-lg font-semibold">Security &amp; Trust</h3>
               <div className="space-y-2">
                 <div className="flex items-center space-x-2">
                   <CheckCircle className="h-4 w-4 text-green-400" />

@@ -1,2 +1,3 @@
 .vscode
 evidence/
+.semgrep-venv/

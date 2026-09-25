@@ -67,7 +67,7 @@ export default function NewVaccinationCard() {
               <h4 className="font-medium text-green-800 text-sm">
                 GOV Approved
               </h4>
-              <p className="text-xs text-green-600">Secure & trusted</p>
+              <p className="text-xs text-green-600">Secure &amp; trusted</p>
             </div>
           </div>
         </div>
