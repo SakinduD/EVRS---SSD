@@ -34,8 +34,8 @@ They are excluded by `blackbox/**/session-data/` in the root `.gitignore`.
 |---|---|---|---:|---:|---:|---:|
 | Frontend (Next.js) | `http://localhost:3000` | 25 Sep 2026 22:41 | 0 | 3 | 1 | 4 |
 | Backend (Express) | `http://localhost:5000` | 25 Sep 2026 21:41 | 2 | 0 | 6 | 3 |
-| Risk scorer, no token | `http://127.0.0.1:8081` | 25 Sep 2026 20:03 | 0 | 0 | 0 | 0 |
-| Risk scorer, with token | `http://127.0.0.1:8081` | 25 Sep 2026 19:59 | 1 | 0 | 0 | 0 |
+| Risk scorer, no token | `http://127.0.0.1:8081` | 26 Sep 2026 00:07 | 0 | 0 | 0 | 0 |
+| Risk scorer, with token | `http://127.0.0.1:8081` | 26 Sep 2026 00:14 | 1 | 0 | 0 | 0 |
 
 The backend's two Highs are also false positives — see below. Both services
 therefore finish with no High-risk finding that survives triage.
@@ -160,12 +160,22 @@ were left out of scope.
 `curl` sending the seed requests through the ZAP proxy on `localhost:8082`:
 
 - **Run A, no token.** `/score` and `/score/events_debug` without the internal
-  token, plus `/health`, `/health/detail`, `/docs` and `/openapi.json`. Expected
-  and observed: `200, 401, 404, 404, 401, 404`. Report: `ZAP_after_ML_noauth.html`.
+  token, plus `/health`, `/health/detail`, `/docs` and `/openapi.json`. Observed:
+  `200, 401, 404, 404, 401, 404`. Report: `ZAP_after_ML_noauth.html`.
 - **Run B, with token.** The same surface authenticated, seeded with three
   payloads from `scan-inputs/`: the ordinary one the backend sends, the mixed
   batch that reproduced the NaN crash, and the traversal probe. All five requests
   returned 200. Report: `ZAP_after_ML.html`.
+
+**`/score/events_debug` was tightened while checking this scan.** The first
+after-scan run reported it as `401` rather than `404`, which is the detail that
+gave it away: the route was registered unconditionally and only the handler
+refused, so the token check fired first and an anonymous caller learned the
+endpoint existed. A path the service does not have answers 404. Registration is
+now inside `if DEBUG_MODE`, so with `DEBUG_MODE=false` the route is not created
+at all and the path is indistinguishable from any other the service never had.
+The scan was re-run afterwards, which is why the sequence above ends in 404.
+Asserted by `risk-scorer-ml/tools/security_test.py`.
 
 `/openapi.json` could not be imported this time — it now returns 404, because the
 schema is no longer published. The endpoint list was therefore driven by `curl`
@@ -211,10 +221,10 @@ stated plainly rather than left for a reader to take at face value.
    Evidence: `blackbox-after/reports/traversal-fp-proof.txt`.
 
 5. **`ZAP-2` was still present when the after-scan began, and was fixed on
-   25 Sep 2026 before the reports above were generated.** The before-scan found
+   25 Sep 2026, before the reports above were generated.** The before-scan found
    an unhandled `ValueError` ("NaN values are not JSON compliant") on
-   `/score/events_debug`. That endpoint was removed, but the same defect survived
-   in the response builder of `POST /score`, the endpoint the Node backend
+   `/score/events_debug`. That endpoint no longer returns data, but the same
+   defect survived in the response builder of `POST /score`, the endpoint the Node backend
    actually calls, and surfaced as a 500 on the admin Manage Risks page against
    real data. Reporting `ZAP-2` as fixed while `/score` still carried it would
    have been wrong, so it was fixed and a regression test added.
@@ -248,6 +258,14 @@ git worktree add ../evrs-baseline 41e13ae
 # 3. Run ZAP against the target, then:
 #    Report > Generate Report > HTML, into the matching reports/ folder
 ```
+
+Two scripts under `risk-scorer-ml/tools/` re-check the service without ZAP and
+without installing anything into its pinned environment:
+
+| Script | What it asserts |
+|---|---|
+| `security_test.py` | The controls still refuse what they were written to refuse: authentication on the scoring surface, the development and disclosure surfaces being absent, the input bounds, that a rejection does not echo the submitted value, and that no NaN reaches a response. 18 checks. |
+| `contract_test.py` | The service still answers `adminController.js` correctly, which the checks above cannot show. |
 
 The seed payloads for the risk-scorer after-scan are committed under
 `scan-inputs/`, so both runs can be repeated exactly:

@@ -766,7 +766,8 @@ def score_events(req: ScoreRequest):
     results = _score_dataframe(df)
     return {"results": results}
 
-# Registered only when DEBUG_MODE is on.
+# Registered only when DEBUG_MODE is on - the `if` below is the registration,
+# not a runtime check inside a route that exists either way.
 #
 # This endpoint exists to inspect the engineered features while working on the
 # model. It returns a citizen's derived age in days, blood type, district,
@@ -776,31 +777,34 @@ def score_events(req: ScoreRequest):
 # should not be reachable in production at all: if the shared token ever leaks,
 # or the Node backend is compromised, this is extra data the attacker gets for
 # free. Two layers, not one.
-@app.post(
-    "/score/events_debug",
-    dependencies=[Depends(require_internal_token)],
-    include_in_schema=DEBUG_MODE,
-)
-def score_events_debug(req: ScoreRequest):
-    if not DEBUG_MODE:
-        # Belt and braces: even if the registration above is ever changed, the
-        # handler itself refuses to answer outside development, and it refuses
-        # before doing any work on the payload.
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
-    if not req.events:
-        raise HTTPException(status_code=400, detail="No events provided")
-    rows: List[Dict[str, Any]] = []
-    for c in req.events:
-        rows.extend(_engineer_events_from_wide(c, req.mode))
-    if not rows:
-        return {"features": []}
-    df = pd.DataFrame(rows)
-    df = _complete_columns(df)
-    return {
-        "features": df.to_dict(orient="records"),
-        "n_features": len(df.columns),
-        "columns": list(df.columns),
-    }
+#
+# An earlier version registered the route unconditionally and had the handler
+# raise 404 outside development. That still returned no data, but the token
+# check runs before the handler, so an anonymous caller got 401 where a path
+# that does not exist would have given 404 - which told them the endpoint was
+# there. Not registering it at all removes that signal: outside development the
+# path is indistinguishable from any other route the service does not have.
+if DEBUG_MODE:
+
+    @app.post(
+        "/score/events_debug",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def score_events_debug(req: ScoreRequest):
+        if not req.events:
+            raise HTTPException(status_code=400, detail="No events provided")
+        rows: List[Dict[str, Any]] = []
+        for c in req.events:
+            rows.extend(_engineer_events_from_wide(c, req.mode))
+        if not rows:
+            return {"features": []}
+        df = pd.DataFrame(rows)
+        df = _complete_columns(df)
+        return {
+            "features": df.to_dict(orient="records"),
+            "n_features": len(df.columns),
+            "columns": list(df.columns),
+        }
 
 if __name__ == "__main__":
     import uvicorn

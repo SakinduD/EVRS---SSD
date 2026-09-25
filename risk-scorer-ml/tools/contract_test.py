@@ -1,8 +1,8 @@
 """Check the scorer against the contract the Node backend actually relies on.
 
-The unit and black-box tests prove the service rejects what it should. They do
-not prove it still answers correctly for the one caller that matters. This
-script builds a payload with the exact shape `getRisks()` in
+`security_test.py` proves the service rejects what it should. It does not prove
+the service still answers correctly for the one caller that matters. This script
+builds a payload with the exact shape `getRisks()` in
 server/controllers/adminController.js produces, sends it the way that controller
 sends it, and asserts the response carries every field the controller then reads.
 
