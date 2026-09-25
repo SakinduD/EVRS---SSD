@@ -1,0 +1,96 @@
+V14 - artifact integrity verification before joblib.load
+========================================================
+
+The finding
+-----------
+app.py loaded the model with joblib.load(MODEL_PATH) and the feature schema
+from disk, with no check on either. joblib.load() unpickles, and unpickling
+executes whatever code the file chooses, at import time, before a single
+request is served. Anyone who could write to the model file - a compromised
+training pipeline, a shared artefact store, a misconfigured volume, a
+misapplied MODEL_PATH - had code execution inside the scoring service. That is
+OWASP A08, Software and Data Integrity Failures.
+
+No scanner reports this. ZAP cannot see it: it is not reachable over HTTP, it
+happens before the port is open, and the service looks entirely healthy
+afterwards. It was found by reading the loader.
+
+The fix
+-------
+artifacts.lock.json pins a SHA-256 digest per artifact and is tracked in git,
+so changing a pin is visible in review. A digest is not a secret. Regenerated
+after retraining with `python tools/checksum_artifacts.py --write`.
+
+_read_verified_bytes() reads the file once, hashes the buffer, compares it to
+the pin, and returns the bytes only on a match. Three details matter:
+
+1. It runs *before* the deserialiser, not after. The call site is
+   `joblib.load(io.BytesIO(_read_verified_bytes(MODEL_PATH, "MODEL")))`, so
+   verification is an argument to the load rather than a step beside it - it
+   cannot be reordered or skipped by accident.
+
+2. The bytes that were hashed are the bytes that get deserialised. Hashing the
+   path and then loading from the path again would leave a TOCTOU window:
+   anyone able to write between the two reads passes the check and still has
+   different bytes executed. Returning the buffer closes that window.
+
+3. It fails closed. A missing pin aborts startup rather than warning, unless
+   ALLOW_UNVERIFIED_ARTIFACTS is explicitly set for local development.
+
+Demonstration
+-------------
+The real artefact was not touched. A copy was made, one zero byte was appended
+to the copy, and the service was pointed at the copy with MODEL_PATH.
+
+  File                          SHA-256
+  evrs_miss_next_model.pkl      e70c32f8c0c0448b9adc94cedbaf0e3713465d7c2638d2bfb1fa7cde8e26dbda  == pin
+  tampered-model.pkl            497ced87bbc04fc7fad9050705a1020dc3468263796ce66c5b203c0226f3ab7f  != pin
+  artifacts.lock.json  MODEL    e70c32f8c0c0448b9adc94cedbaf0e3713465d7c2638d2bfb1fa7cde8e26dbda
+
+A single appended byte changes the whole digest.
+
+  $ MODEL_PATH=./tampered-model.pkl PORT=8085 python app.py
+
+  INFO  [evrs.scorer] CORS middleware not mounted; this service is called server-to-server only.
+  ERROR [evrs.scorer] MODEL integrity check failed for ...\risk-scorer-ml\tampered-model.pkl
+  Traceback (most recent call last):
+    File "...\app.py", line 441, in <module>
+      model = joblib.load(io.BytesIO(_read_verified_bytes(MODEL_PATH, "MODEL")))
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "...\app.py", line 202, in _read_verified_bytes
+      raise RuntimeError(
+  RuntimeError: MODEL failed integrity verification; refusing to load it.
+
+  exit code: 1
+
+The service does not start. The traceback is itself the proof of ordering: the
+failure is raised inside the argument to joblib.load, so the tampered file was
+never handed to the unpickler. Nothing bound a port; there is no degraded mode
+to fall back into.
+
+Note what the error does not say. It names the artefact and the path, and stops
+there. It does not echo the digest that was computed. On a mismatch the service
+may be talking to whoever wrote the file, and confirming the observed hash only
+helps them iterate towards a collision or a working forgery.
+
+Control
+-------
+The check is on content, not on location. An untampered copy at a different
+path starts normally:
+
+  $ MODEL_PATH=./pristine-copy.pkl PORT=8086 python app.py
+
+  INFO  [evrs.scorer] MODEL integrity verified (sha256=e70c32f8c0c0448b9adc94cedbaf0e3713465d7c2638d2bfb1fa7cde8e26dbda)
+  INFO  [evrs.scorer] SCHEMA integrity verified (sha256=c7601f9974be96e0e068d4407ab62926b00e11adce986b646ccb20fedd5dba7a)
+  INFO:     Application startup complete.
+
+So the refusal above is the digest mismatch, not the service objecting to an
+unfamiliar path. Both copies were deleted after the run; the tracked artefact
+is unchanged.
+
+Related hardening in the same loader
+------------------------------------
+MODEL_PATH and SCHEMA_PATH are resolved relative to the service directory and
+a path that escapes it is rejected, so the pin cannot be sidestepped by
+pointing the loader at a file somewhere else on disk and the deserialiser
+cannot be aimed outside the service at all.

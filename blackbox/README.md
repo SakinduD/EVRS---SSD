@@ -190,6 +190,22 @@ what the reports reflect.
 Some findings in these reports are not what their titles say. Each one below is
 stated plainly rather than left for a reader to take at face value.
 
+### What the scans could not see
+
+**V14, the artifact integrity failure, appears in no report on either side.**
+`joblib.load()` unpickles the model, and unpickling executes code the file
+chooses, at import time, before the port is open. Anyone able to write to the
+model file had code execution inside the service. ZAP cannot reach that: it is
+not an HTTP surface, it happens before the service starts answering, and a
+compromised service looks perfectly healthy afterwards. It was found by reading
+the loader, and it is demonstrated by tampering with a copy of the artefact and
+showing the service refuse to start.
+Evidence: `blackbox-after/reports/v14-tamper-proof.txt`.
+
+This is worth stating next to the alert counts. A clean after-scan means the
+service resists what a scanner knows how to send; it does not mean the service
+is sound. The most serious finding in the risk scorer is one no scanner raised.
+
 ### Before-scan
 
 1. **Four of the risk-scorer alerts were raised manually.** `V13a`, `V13b`,
@@ -276,10 +292,10 @@ The seed payloads for the risk-scorer after-scan are committed under
 | `nan-probe.json` | Two citizens, one with a vaccine code and one without — a *mixed* batch, which is the only case that reproduced the NaN crash |
 | `traversal-probe.json` | A traversal sequence in every string field the endpoint accepts |
 
-## Two changes made between the before and after scans
+## Changes made between the before and after scans
 
-Both were found while preparing the after-scan rather than by ZAP itself, and
-both are in `risk-scorer-ml/app.py`:
+Each was found while preparing the after-scan rather than by ZAP itself. Three
+are in `risk-scorer-ml/app.py`:
 
 - `_json_safe()` in the response builder, which maps a pandas missing value onto
   `None`. pandas only produces `NaN` for a *mixed* column, so a single-citizen
@@ -293,8 +309,13 @@ both are in `risk-scorer-ml/app.py`:
   outside the body-size middleware so it reaches every response, including the
   401s, the 413 and the validation 422s.
   Evidence: `blackbox-after/reports/nosniff-proof.txt`.
+- `/score/events_debug` moved inside `if DEBUG_MODE`, so outside development the
+  route is not created at all. It previously registered unconditionally and let
+  the handler return 404, which meant the token check answered first and an
+  anonymous caller got 401 - telling them the endpoint was there. Described
+  under "How each scan was set up" above.
 
-A third change was made in `client/next.config.ts`: `poweredByHeader: false`
+One change was made in `client/next.config.ts`: `poweredByHeader: false`
 plus a `headers()` block carrying the CSP, `X-Frame-Options`,
 `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` on
 `/:path*`, so they reach static chunks as well as pages. The frontend had no
