@@ -1,3 +1,5 @@
 .vscode
 evidence/
 .semgrep-venv/
+
+blackbox/**/session-data/
