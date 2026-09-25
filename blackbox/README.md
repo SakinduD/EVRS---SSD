@@ -13,7 +13,15 @@ fixes so the two can be compared.
 ```
 blackbox-before/reports/    HTML reports for the unfixed baseline
 blackbox-after/reports/     HTML reports for the fixed code
+blackbox-after/proof/       what each finding's fix was checked against
+scan-inputs/                the payloads the risk-scorer runs were seeded with
 ```
+
+The files under `proof/` are not ZAP output. They record how a fix was
+confirmed, or why an alert was triaged away, in enough detail to be repeated:
+the request that was sent, the response that came back, and what in the source
+makes that the expected answer. An alert count in a report says what a scanner
+saw; these say what was done about it.
 
 ZAP's own `.session` databases are **not** committed. They are working files,
 not evidence — the backend session alone is 1.2 GB, and the sessions store
@@ -66,7 +74,7 @@ started reporting the *weaknesses* of the one that is there.
 Those weaknesses are real and are not hidden here. Two of them - `unsafe-inline`
 on script and on style - are what it costs to serve Next.js without a
 per-request nonce, and the decision not to take the nonce route is explained in
-`blackbox-after/reports/frontend-headers-proof.txt`. The third, `unsafe-eval`,
+`blackbox-after/proof/frontend-headers-proof.txt`. The third, `unsafe-eval`,
 is emitted only under `isDev`; a production build does not carry it, and it
 appears here because the scan runs against the development server so that it
 compares against the before-scan rather than against a different application.
@@ -177,9 +185,21 @@ at all and the path is indistinguishable from any other the service never had.
 The scan was re-run afterwards, which is why the sequence above ends in 404.
 Asserted by `risk-scorer-ml/tools/security_test.py`.
 
-`/openapi.json` could not be imported this time — it now returns 404, because the
-schema is no longer published. The endpoint list was therefore driven by `curl`
-rather than by ZAP's OpenAPI import.
+`/openapi.json` could not be imported this time — it now returns 404, because
+the schema is no longer published. The endpoint list was therefore driven by
+`curl` rather than by ZAP's OpenAPI import.
+
+That raises a fair objection: a scanner that cannot discover the routes will
+report a clean result for the wrong reason — "found nothing" rather than
+"attacked the same endpoints and they held". It does not apply here, because
+the whole surface is four routes and they were enumerated by hand from
+`app.py`: `/health`, `/health/detail`, `/score` and `/score/events_debug`. Both
+runs send every one of them, which is the same set the before-scan imported
+from the schema. The seed requests and their observed status codes are listed
+above so the coverage can be checked rather than taken on trust, and the active
+scan then worked from those requests. For a larger surface the honest approach
+would be to feed ZAP the schema captured from the unfixed service; for four
+routes, `curl` reaches all of them.
 
 A ZAP Replacer rule was tried first for the token and did not apply; sending the
 `X-Internal-Token` header directly from `curl` through the proxy worked and is
@@ -200,7 +220,7 @@ not an HTTP surface, it happens before the service starts answering, and a
 compromised service looks perfectly healthy afterwards. It was found by reading
 the loader, and it is demonstrated by tampering with a copy of the artefact and
 showing the service refuse to start.
-Evidence: `blackbox-after/reports/v14-tamper-proof.txt`.
+Evidence: `blackbox-after/proof/v14-tamper-proof.txt`.
 
 This is worth stating next to the alert counts. A clean after-scan means the
 service resists what a scanner knows how to send; it does not mean the service
@@ -234,7 +254,7 @@ is sound. The most serious finding in the risk scorer is one no scanner raised.
    a traversal sequence in every string field the endpoint accepts and the
    response echoed the value back as a citizen id with no file content anywhere.
    ZAP is matching on the reflection, not on a read.
-   Evidence: `blackbox-after/reports/traversal-fp-proof.txt`.
+   Evidence: `blackbox-after/proof/traversal-fp-proof.txt`.
 
 5. **`ZAP-2` was still present when the after-scan began, and was fixed on
    25 Sep 2026, before the reports above were generated.** The before-scan found
@@ -244,14 +264,14 @@ is sound. The most serious finding in the risk scorer is one no scanner raised.
    actually calls, and surfaced as a 500 on the admin Manage Risks page against
    real data. Reporting `ZAP-2` as fixed while `/score` still carried it would
    have been wrong, so it was fixed and a regression test added.
-   Evidence: `blackbox-after/reports/nan-fix-proof.txt`.
+   Evidence: `blackbox-after/proof/nan-fix-proof.txt`.
 
 6. **"SQL Injection - SQLite" (High, ×2 on the backend) is a false positive.**
    There is no SQL engine in the stack. `server/package.json` declares Mongoose
    and no SQL driver, ORM or SQLite binding, so there is no statement for an
    injection to alter. ZAP substituted the request path into a JSON body field
    and inferred a database from the response shape; the Evidence field is empty.
-   Evidence: `blackbox-after/reports/backend-fp-proof.txt`.
+   Evidence: `blackbox-after/proof/backend-fp-proof.txt`.
 
 7. **"Path Traversal" (High, ×3 on the backend) is a false positive, for the
    same reason as on the ML service.** All 50 JavaScript files under `server/`
@@ -261,7 +281,7 @@ is sound. The most serious finding in the risk scorer is one no scanner raised.
    set matches "express" in 8 files, so the search ran over real source. A
    traversal sequence needs a file operation to traverse into, and the process
    never opens a path.
-   Evidence: `blackbox-after/reports/backend-fp-proof.txt`.
+   Evidence: `blackbox-after/proof/backend-fp-proof.txt`.
 
 ## Reproducing
 
@@ -282,6 +302,11 @@ without installing anything into its pinned environment:
 |---|---|
 | `security_test.py` | The controls still refuse what they were written to refuse: authentication on the scoring surface, the development and disclosure surfaces being absent, the input bounds, that a rejection does not echo the submitted value, and that no NaN reaches a response. 18 checks. |
 | `contract_test.py` | The service still answers `adminController.js` correctly, which the checks above cannot show. |
+
+A run of both is recorded in `blackbox-after/proof/controls-verification.txt`.
+It supersedes the per-finding snapshots taken while the fixes were being
+written: some of those record a surface that has since changed, and a script
+that can be re-run is worth more than a transcript that cannot.
 
 The seed payloads for the risk-scorer after-scan are committed under
 `scan-inputs/`, so both runs can be repeated exactly:
@@ -308,7 +333,7 @@ are in `risk-scorer-ml/app.py`:
   on the current deployment, and the header costs one line. It is registered
   outside the body-size middleware so it reaches every response, including the
   401s, the 413 and the validation 422s.
-  Evidence: `blackbox-after/reports/nosniff-proof.txt`.
+  Evidence: `blackbox-after/proof/nosniff-proof.txt`.
 - `/score/events_debug` moved inside `if DEBUG_MODE`, so outside development the
   route is not created at all. It previously registered unconditionally and let
   the handler return 404, which meant the token check answered first and an
@@ -323,7 +348,7 @@ security headers before this. `src/middleware.ts` was deliberately left alone:
 it exists to guard routes, and widening its matcher to every request just to
 attach a header would put the role checks in the path of traffic they were
 never written for.
-Evidence: `blackbox-after/reports/frontend-headers-proof.txt`.
+Evidence: `blackbox-after/proof/frontend-headers-proof.txt`.
 
 Each change was made *before* the after-scan report for that service was
 generated, so every report describes the code as it stands.

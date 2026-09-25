@@ -1,0 +1,66 @@
+Security controls, verified against the code as it stands
+=========================================================
+
+Earlier per-finding snapshots were taken while the fixes were being written, so
+some of them record a surface that has since changed. `after-V13-auth.txt`, for
+instance, shows /docs, /redoc and /openapi.json answering 200, which was true
+before the V16 gating landed, and /score/events_debug answering 200 to a valid
+token, which was true before its registration moved behind DEBUG_MODE. This
+file supersedes them. It is the output of a script, so it can be re-run rather
+than trusted.
+
+    cd risk-scorer-ml
+    python tools/security_test.py
+
+The script sends the requests each control was written to reject and asserts on
+the status code, not on the source. It uses the standard library only, so it
+adds nothing to an environment whose package versions are pinned and whose
+behaviour is recorded in the ZAP reports beside this file.
+
+Run on 26 September 2026, against the service on 127.0.0.1:8081, DEBUG_MODE=false.
+
+  V13  authentication on the scoring surface
+  pass    /score without a token is refused  HTTP 401
+  pass    /score with a wrong token is refused  HTTP 401
+  pass    /score with the token is accepted  HTTP 200
+  pass    /health/detail without a token is refused  HTTP 401
+  
+  V16  development and disclosure surfaces are gone
+  pass    /docs is not served  HTTP 404
+  pass    /redoc is not served  HTTP 404
+  pass    /openapi.json is not served  HTTP 404
+  pass    /score/events_debug is not registered (404, not 401)  HTTP 404
+  pass    /score/events_debug returns no features to a valid token  HTTP 404
+  pass    /health is a liveness probe only  keys ['ok']
+  pass    /health leaks no version or path
+  pass    no Server header on any response  10 responses checked
+  
+  V15  input bounds
+  pass    an oversized Content-Length is refused before the body is read  HTTP 413
+  pass    a negative Content-Length is refused  HTTP 400
+  pass    more than 1000 events is refused  HTTP 422
+  pass    a payload that fails validation is refused  HTTP 422
+  pass    the rejection does not echo the submitted value back  error body carries loc/type/msg only
+  
+  Response hygiene
+  pass    every response from the app carries X-Content-Type-Options: nosniff  13 responses checked
+  pass    a mixed batch scores without a NaN reaching the response  2 results
+  
+  Every control held.
+
+And the other half, because refusing everything is not the goal - the service
+must still answer the one caller that matters:
+
+    python tools/contract_test.py
+
+  pass  Node-shaped payload accepted  HTTP 200
+  pass  response has a 'results' array
+  pass  result[0] has all mapped fields
+  pass  result[1] has all mapped fields
+  pass  risk_tier values are High/Medium/Low  got ['Medium']
+  pass  risk_prob is numeric
+  pass  citizen with no vaccination history handled  scored: ['CTR-0001', 'CTR-0003']
+  pass  no NaN in any result value
+  pass  same payload without the token is refused  HTTP 401
+  
+  Contract holds: the scorer answers what adminController.js expects.

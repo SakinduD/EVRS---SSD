@@ -1,0 +1,31 @@
+V15 - what the input bounds are actually bounding
+=================================================
+
+The controls themselves are asserted by risk-scorer-ml/tools/security_test.py:
+an oversized Content-Length is refused with 413, more than
+MAX_EVENTS_PER_REQUEST events with 422, and a rejection does not echo the
+submitted value back.
+
+This file is the measurement behind the choice of bound. It answers the
+question a limit invites: what does a request that sits exactly at the limit
+cost the service, and is size the right thing to be limiting at all?
+
+Measured before the ZAP after-scan, against the service on a separate port with
+DEBUG_MODE off.
+
+=== V15: work performed per request at the configured limits ===
+    (service on 127.0.0.1:8110, DEBUG_MODE off)
+
+  request                                  body       time     response
+  one                                     493 B  0.086112s         209 B
+  max_latest                           463030 B  0.840410s      196013 B
+  max_all                              463027 B  1.453397s      589013 B
+
+  --- 5 concurrent max_all requests (1000 events, mode=all) ---
+  total wall time: 8813 ms
+
+  Interpretation: a worst-case in-bounds request completes in ~1.3 s. Five
+  concurrent requests take ~5x one request, so scoring is serialised:
+  /score is a sync def handler and predict_proba is CPU-bound. V15 therefore
+  bounds input SIZE, not request RATE - see the report for why rate limiting
+  was judged unnecessary here.
