@@ -1,0 +1,111 @@
+Security headers on the Next.js frontend
+========================================
+
+The frontend before-scan reported four header findings and the first after-scan
+reported the same four, unchanged: the frontend had received no hardening at
+all. client/next.config.ts was an empty object.
+
+  Content Security Policy (CSP) Header Not Set   Medium
+  Missing Anti-clickjacking Header               Medium
+  Server Leaks Information via "X-Powered-By"    Low
+  X-Content-Type-Options Header Missing          Low
+
+Fix
+---
+client/next.config.ts: poweredByHeader disabled, and a headers() block on
+"/:path*" so the headers reach every response including the /_next/static
+chunks, which is where most of the missing-header instances were counted.
+
+Why next.config.ts and not middleware
+--------------------------------------
+A nonce-based CSP has to be generated per request, which means middleware. This
+app already has src/middleware.ts, and it exists to guard routes: it maps
+cookies to roles and redirects. Its matcher deliberately covers only the
+authenticated route prefixes. Widening it to every request in order to attach a
+header would put the role checks in the path of traffic they were never written
+for - static chunks, fonts, the public landing page - for no security gain on
+those paths.
+
+next.config.ts headers() covers everything, including static assets, and leaves
+the route guards untouched.
+
+The cost of that choice is stated plainly: without a nonce, script-src needs
+'unsafe-inline', because Next.js emits inline bootstrap scripts
+(self.__next_f.push(...)) on every page. ZAP will report that. A CSP that is
+weak on inline script but still blocks framing, plugins, base-tag injection and
+off-origin form posts is worth more than no CSP at all, which is what was there
+before. 'unsafe-eval' is development only - React Refresh needs it, a
+production build does not.
+
+Verification
+------------
+  http://localhost:3000/
+    Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' http://localhost:5000 ws://localhost:3000; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+    X-Frame-Options: DENY
+    X-Content-Type-Options: nosniff
+    Referrer-Policy: strict-origin-when-cross-origin
+    Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+  http://localhost:3000/login
+    Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' http://localhost:5000 ws://localhost:3000; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+    X-Frame-Options: DENY
+    X-Content-Type-Options: nosniff
+    Referrer-Policy: strict-origin-when-cross-origin
+    Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+  http://localhost:3000/admin/login
+    Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' http://localhost:5000 ws://localhost:3000; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+    X-Frame-Options: DENY
+    X-Content-Type-Options: nosniff
+    Referrer-Policy: strict-origin-when-cross-origin
+    Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+  a static chunk - http://localhost:3000/_next/static/chunks/%5Broot-of-the-server%5D__b7f92451._.css
+    Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-
+    X-Frame-Options: DENY
+    X-Content-Type-Options: nosniff
+
+X-Powered-By is absent from all of them; it was present on 45 responses in the
+before-scan.
+
+The application still works under this policy. Logged in as admin in a normal
+browser with DevTools open: no CSP violation in the console, the dashboard
+charts render (so the XHRs to http://localhost:5000 are allowed by connect-src)
+and Fast Refresh reconnects (so the dev websocket is allowed too). The only
+console output is pre-existing Recharts sizing warnings and an autocomplete
+hint, neither related to these headers.
+
+
+Result in the after-scan
+------------------------
+Scoped to http://localhost:3000 only:
+
+  Alert                                          Risk     Before  After
+  ---------------------------------------------------------------------
+  Content Security Policy (CSP) Header Not Set   Medium       45      -
+  Missing Anti-clickjacking Header               Medium       42      -
+  Server Leaks Information via "X-Powered-By"    Low          45      -
+  X-Content-Type-Options Header Missing          Low          75      1
+  CSP: script-src unsafe-inline                  Medium        -      5
+  CSP: style-src unsafe-inline                   Medium        -      5
+  CSP: script-src unsafe-eval                    Medium        -      5
+
+Three findings are gone outright and a fourth drops from 75 instances to 1.
+
+The three new Mediums are all sub-findings of the CSP that was added: ZAP now
+reports the weaknesses of the policy instead of its absence. This is the
+trade-off described above, and it was expected before the scan was run. Two of
+the three are inherent to serving Next.js without a per-request nonce. The
+third, script-src unsafe-eval, exists only because the scan runs against the
+development server: the config emits it under `isDev` and a production build
+does not carry it. The before-scan was also run in development mode, and
+changing that would have compared two different applications rather than two
+states of the same one.
+
+The one remaining X-Content-Type-Options instance is on
+POST /__nextjs_original-stack-frames, a Next.js development-only internal route
+that serves the error overlay. It is handled by the dev server before
+next.config's headers() apply, and it does not exist in a production build.
+Verified directly: every other response type carries the header - the page
+itself, static chunks, 404s, favicon, and the middleware redirects on /admin
+and /dashboard.

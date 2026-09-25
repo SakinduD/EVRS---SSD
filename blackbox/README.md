@@ -32,13 +32,49 @@ They are excluded by `blackbox/**/session-data/` in the root `.gitignore`.
 
 | Service | Target | Scanned | High | Med | Low | Info |
 |---|---|---|---:|---:|---:|---:|
-| Frontend (Next.js) | `http://localhost:3000` | not yet re-scanned | – | – | – | – |
+| Frontend (Next.js) | `http://localhost:3000` | 25 Sep 2026 22:41 | 0 | 3 | 1 | 4 |
 | Backend (Express) | `http://localhost:5000` | 25 Sep 2026 21:41 | 2 | 0 | 6 | 3 |
 | Risk scorer, no token | `http://127.0.0.1:8081` | 25 Sep 2026 20:03 | 0 | 0 | 0 | 0 |
 | Risk scorer, with token | `http://127.0.0.1:8081` | 25 Sep 2026 19:59 | 1 | 0 | 0 | 0 |
 
 The backend's two Highs are also false positives — see below. Both services
 therefore finish with no High-risk finding that survives triage.
+
+### Frontend, before against after
+
+Scoped to `http://localhost:3000`. Traditional spider plus AJAX spider plus
+active scan, unauthenticated, against the Next.js development server, matching
+the before-scan.
+
+| Alert | Risk | Before | After | |
+|---|---|---:|---:|---|
+| Content Security Policy (CSP) Header Not Set | Medium | 45 | – | fixed |
+| Missing Anti-clickjacking Header | Medium | 42 | – | fixed |
+| Server Leaks Information via `X-Powered-By` | Low | 45 | – | fixed |
+| `X-Content-Type-Options` Header Missing | Low | 75 | 1 | see below |
+| CSP: script-src unsafe-inline | Medium | – | 5 | new, see below |
+| CSP: style-src unsafe-inline | Medium | – | 5 | new, see below |
+| CSP: script-src unsafe-eval | Medium | – | 5 | new, development only |
+
+The Medium count goes from 2 to 3, and that number on its own is misleading.
+The frontend had no security headers at all: `client/next.config.ts` was an
+empty object. It now sets a CSP, `X-Frame-Options`, `X-Content-Type-Options`,
+`Referrer-Policy` and `Permissions-Policy`, and no longer advertises its
+framework version. ZAP has stopped reporting the *absence* of a policy and
+started reporting the *weaknesses* of the one that is there.
+
+Those weaknesses are real and are not hidden here. Two of them - `unsafe-inline`
+on script and on style - are what it costs to serve Next.js without a
+per-request nonce, and the decision not to take the nonce route is explained in
+`blackbox-after/reports/frontend-headers-proof.txt`. The third, `unsafe-eval`,
+is emitted only under `isDev`; a production build does not carry it, and it
+appears here because the scan runs against the development server so that it
+compares against the before-scan rather than against a different application.
+
+The single remaining `X-Content-Type-Options` instance is on
+`POST /__nextjs_original-stack-frames`, a Next.js development-only internal
+route that the dev server answers before `next.config`'s `headers()` apply. It
+does not exist in a production build.
 
 ### Backend, before against after
 
@@ -240,5 +276,15 @@ both are in `risk-scorer-ml/app.py`:
   401s, the 413 and the validation 422s.
   Evidence: `blackbox-after/reports/nosniff-proof.txt`.
 
-Both changes were made *before* the after-scan reports above were generated, so
-the reports describe the code as it stands.
+A third change was made in `client/next.config.ts`: `poweredByHeader: false`
+plus a `headers()` block carrying the CSP, `X-Frame-Options`,
+`X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` on
+`/:path*`, so they reach static chunks as well as pages. The frontend had no
+security headers before this. `src/middleware.ts` was deliberately left alone:
+it exists to guard routes, and widening its matcher to every request just to
+attach a header would put the role checks in the path of traffic they were
+never written for.
+Evidence: `blackbox-after/reports/frontend-headers-proof.txt`.
+
+Each change was made *before* the after-scan report for that service was
+generated, so every report describes the code as it stands.

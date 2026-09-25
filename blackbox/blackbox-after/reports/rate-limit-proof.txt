@@ -1,0 +1,57 @@
+Login rate limiting on the backend
+==================================
+
+ZAP does not report the absence of a login rate limit, so the before-scan could
+not show this one way or the other. It is demonstrated directly instead.
+
+Control
+-------
+server/routes/authRoutes.js mounts two limiters on /api/auth:
+
+  router.use(authIpLimiter)                            50 requests / 15 min, per IP
+  router.post("/login/admin", loginLimiter("adminId")) 5 failed / 15 min, per IP + account
+
+loginLimiter is keyed on the IP *and* the submitted account id, so one account
+being attacked does not lock out every other account from the same address.
+
+Test 1: six failed logins for one account
+------------------------------------------
+  POST http://localhost:5000/api/auth/login/admin
+  {"adminId":"RLPROOF-0001","password":"wrong-password-on-purpose"}
+
+  attempt 1  HTTP 401  {"message":"Invalid ID or password"}
+  attempt 2  HTTP 401  {"message":"Invalid ID or password"}
+  attempt 3  HTTP 401  {"message":"Invalid ID or password"}
+  attempt 4  HTTP 401  {"message":"Invalid ID or password"}
+  attempt 5  HTTP 401  {"message":"Invalid ID or password"}
+  attempt 6  HTTP 429  {"message":"Too many login attempts. Please try again in 15 minutes."}
+  attempt 7  HTTP 429  {"message":"Too many login attempts. Please try again in 15 minutes."}
+  attempt 8  HTTP 429  {"message":"Too many login attempts. Please try again in 15 minutes."}
+
+Five failures are allowed; the sixth is refused. An unauthenticated caller can
+no longer sit on this endpoint guessing passwords.
+
+Note the 401 body: "Invalid ID or password", the same message whether the
+account exists or not. RLPROOF-0001 does not exist, and the response is
+indistinguishable from a wrong password on a real account, so the endpoint
+cannot be used to enumerate account ids.
+
+Test 2: the limit is per account, not per IP
+---------------------------------------------
+Immediately after the lockout above, from the same address:
+
+  {"adminId":"RLPROOF-0002", ...}   attempt 1  HTTP 401
+  {"adminId":"RLPROOF-0002", ...}   attempt 2  HTTP 401
+  {"adminId":"RLPROOF-0001", ...}              HTTP 429   (still locked)
+
+A second account is unaffected while the first stays locked. An attacker cannot
+lock a legitimate user out of the whole service by burning one account's budget,
+and the block follows the account being attacked rather than the address alone.
+
+The per-IP limiter
+------------------
+authIpLimiter (50 requests / 15 min across all of /api/auth) was not exercised
+separately here, because tripping it would block the login endpoints for 15
+minutes. It is visible in the backend after-scan instead: the active scan sent
+thousands of requests at /api/auth/* and the History shows the 429 responses
+that resulted.
