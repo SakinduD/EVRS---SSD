@@ -419,7 +419,7 @@ export default function NewVaccinationPage() {
                   <AlertDescription className="text-blue-800">
                     <strong>Technical Support:</strong> If you experience any
                     issues with QR code generation or scanning, please contact
-                    our support team through the Help & Support section in your
+                    our support team through the Help &amp; Support section in your
                     dashboard.
                   </AlertDescription>
                 </Alert>

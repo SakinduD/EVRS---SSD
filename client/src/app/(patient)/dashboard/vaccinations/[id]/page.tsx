@@ -209,7 +209,7 @@ export default function VaccinationDetailPage() {
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Beaker className="mr-2 h-5 w-5" />
-                  Batch & Quality Information
+                  Batch &amp; Quality Information
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -377,7 +377,7 @@ export default function VaccinationDetailPage() {
                 <Separator />
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">
-                    Date & Time
+                    Date &amp; Time
                   </label>
                   <p className="font-medium flex items-center">
                     <Calendar className="w-4 h-4 mr-1" />
@@ -442,7 +442,7 @@ export default function VaccinationDetailPage() {
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Thermometer className="mr-2 h-5 w-5" />
-                  Storage & Handling
+                  Storage &amp; Handling
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">

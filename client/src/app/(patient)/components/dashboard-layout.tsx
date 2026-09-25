@@ -153,7 +153,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                     <Link href="/dashboard/profile">Profile Settings</Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link href="/dashboard/support">Help & Support</Link>
+                    <Link href="/dashboard/support">Help &amp; Support</Link>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem

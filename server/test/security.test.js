@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
-import { escapeRegex } from "../utils/escapeRegex.js";
+import { escapeRegex, literalSearch } from "../utils/escapeRegex.js";
 import { forgotPassword, resetPassword } from "../controllers/authController.js";
 import { loginCitizen } from "../controllers/auth/citizenAuthController.js";
 import { loginAdmin } from "../controllers/auth/adminAuthController.js";
@@ -81,12 +81,21 @@ test("forgot password preserves its non-enumerating response for unknown account
   }
 });
 
+test("literalSearch returns an escaped $regex operator object, never a RegExp", () => {
+  const condition = literalSearch("(a+)+$");
+  assert.deepEqual(condition, { $regex: String.raw`\(a\+\)\+\$`, $options: "i" });
+  assert.equal(condition instanceof RegExp, false);
+  assert.throws(() => literalSearch({ $regex: ".*" }), TypeError);
+});
+
 test("a normal search and a metacharacter search build literal query patterns", async () => {
   const original = Vaccine.find;
   try {
     for (const search of ["polio", ".*"]) {
       Vaccine.find = (filter) => {
-        const pattern = filter.$or[0].vaccineId;
+        const condition = filter.$or[0].vaccineId;
+        assert.equal(condition.$options, "i");
+        const pattern = new RegExp(condition.$regex, condition.$options);
         assert.equal(pattern.test(search), true);
         assert.equal(pattern.test("unrelated"), false);
         return { sort: async () => [] };
