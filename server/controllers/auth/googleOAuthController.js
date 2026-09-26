@@ -139,13 +139,20 @@ export const googleCallback = async (req, res) => {
         strength: 2,
       });
 
-      // no matching citizen, or that citizen is already tied to another Google account
-      if (!citizen || citizen.googleSub) {
+      if (!citizen) {
         return frontendRedirect(res, "/login", "oauth_no_account");
       }
 
+      // Google verified this email and it matches the profile email, so (re)link.
+      // This also covers a user who changed their profile email to another Google
+      // account: the old link is replaced and the old account can no longer sign in.
       citizen.googleSub = claims.sub;
       await citizen.save();
+    } else if (
+      claims.email.toLowerCase() !== String(citizen.email || "").toLowerCase()
+    ) {
+      // linked Google account no longer matches the profile email
+      return frontendRedirect(res, "/login", "oauth_no_account");
     }
 
     // same session as the password login (loginCitizen)
