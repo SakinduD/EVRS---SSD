@@ -435,7 +435,9 @@ async function scoreBatch(events) {
     throw new Error("INTERNAL_API_TOKEN is not configured");
   }
 
-  const fastApiUrl = `${process.env.FAST_API_URL}/score`;
+  // Trailing slash in FAST_API_URL would produce "//score", which the scorer 404s
+  const baseUrl = (process.env.FAST_API_URL || "").replace(/\/+$/, "");
+  const fastApiUrl = `${baseUrl}/score`;
   const response = await fetch(fastApiUrl, {
     method: "POST",
     headers: {

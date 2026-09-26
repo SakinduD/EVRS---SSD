@@ -196,7 +196,10 @@ test("normal citizen login and reset still work", async () => {
 test("CORS allows only the configured browser origin and accepts requests without Origin", () => {
   for (const [configured, origin, allowed] of [
     ["https://app.example.com", "https://app.example.com", true],
+    ["https://app.example.com/", "https://app.example.com", true],
     ["https://app.example.com", "https://other.example.com", false],
+    ["https://app.example.com/", "https://app.example.com.evil.com", false],
+    ["not a url", "not a url", false],
     [null, "https://other.example.com", false],
     [null, undefined, true],
   ]) {
