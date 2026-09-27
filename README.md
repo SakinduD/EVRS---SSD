@@ -5,6 +5,8 @@ The Electronic Vaccination Record System is a full-stack web application designe
 - `client/`: Next.js frontend with React.
 - `server/`: Node.js/Express backend.
 - `risk-scorer-ml/`: FastAPI backend for machine learning risk scoring.
+- `blackbox/`: Dynamic (DAST) security testing artifacts — OWASP ZAP scans.
+- `whitebox/`: Static (SAST) security testing artifacts — dependency and code audits.
 
 ## Prerequisites
 - Node.js and npm
@@ -58,13 +60,24 @@ TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_WHATSAPP_FROM=
 FAST_API_URL=
+INTERNAL_API_TOKEN=
 FRONTEND_URL=
 NODE_ENV=development
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
+TRUST_PROXY=
+DNS_SERVERS=
 ```
 4. Run the backend server:
 ```
 npm run dev
 ```
+
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` are required
+for Google OAuth (OpenID Connect + PKCE) login. `INTERNAL_API_TOKEN` authorizes
+internal server-to-server calls to the ML service. `TRUST_PROXY` and
+`DNS_SERVERS` are optional and only needed for specific deployment setups.
 
 For production, set `NODE_ENV=production` and `FRONTEND_URL` to the exact
 frontend origin (for example, `https://app.example.com`) in the deployment
@@ -93,8 +106,39 @@ SCHEMA_PATH=./evrs_feature_schema.json
 HORIZON_DAYS=
 HIGH_THR=
 MED_THR=
+INTERNAL_API_TOKEN=
+ALLOWED_ORIGINS=
+HOST=127.0.0.1
+PORT=8081
+DEBUG_MODE=false
+ALLOW_UNVERIFIED_ARTIFACTS=false
+MAX_BODY_BYTES=
+MAX_EVENTS_PER_REQUEST=
+LOG_LEVEL=INFO
+LOG_FILE=
 ```
+`INTERNAL_API_TOKEN` must match the same value configured on the Node backend,
+since it authenticates server-to-server calls between them. `ALLOWED_ORIGINS`
+is a comma-separated list of allowed CORS origins (no `*`). `DEBUG_MODE` and
+`ALLOW_UNVERIFIED_ARTIFACTS` must stay `false` outside local development;
+model/schema integrity digests are pinned in `artifacts.lock.json` rather than
+in `.env`.
 5. Run the FastAPI server:
 ```
 uvicorn app:app --reload
 ```
+
+## Security Testing
+Security testing artifacts for the three services are kept outside the
+application code, split by testing approach:
+
+- `blackbox/`: Dynamic Application Security Testing (DAST) with OWASP ZAP,
+  run against the live frontend, backend, and risk scorer. Contains
+  before/after scan reports (`blackbox-before/`, `blackbox-after/`), proof
+  files documenting how each finding was verified or triaged, and the seed
+  payloads used against the risk scorer. See `blackbox/README.md` for the
+  full methodology, results, and known false positives.
+- `whitebox/`: Static Application Security Testing (SAST) — `npm audit` and
+  Semgrep results for `client/` and `server/`, and `pip-audit`/Semgrep
+  results for `risk-scorer-ml/`, again split into before/after fix
+  snapshots (`whitebox-before/`, `whitebox-after/`).
